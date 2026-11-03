@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/KogenAI/kogen-executor/internal/golden"
 	"kogen-loop/tools"
 )
 
@@ -18,8 +19,24 @@ var everyTool = []string{tools.ShellTool, tools.ViewImageTool, tools.ReadFileToo
 // report_blocker, probe, propose_files, the submit_* definitions of shape, review, refine and
 // init, shape_batch and worker_result) with testdata/defs_golden.json, as parsed values. A
 // generic tool belongs to the pinned loop: the test checks that Kogen offers the definition
-// tools.Definition returns, unchanged, and the golden holds none of them.
+// tools.Definition returns, unchanged, and the golden holds none of them. The golden maps each
+// Kogen-owned tool name to its definition; "go test ./... -update" rewrites it from the
+// current output.
 func TestDefinitionsMatchTheElixirDefinitions(t *testing.T) {
+	if golden.Update() {
+		defs := map[string]any{}
+		for _, name := range everyTool {
+			if _, loop := tools.Definition(name); loop {
+				continue
+			}
+			var def any
+			if err := json.Unmarshal(mustJSON(t, Defs(name)[0]), &def); err != nil {
+				t.Fatal(err)
+			}
+			defs[name] = def
+		}
+		golden.WriteJSON(t, "testdata/defs_golden.json", defs)
+	}
 	data, err := os.ReadFile("testdata/defs_golden.json")
 	if err != nil {
 		t.Fatal(err)

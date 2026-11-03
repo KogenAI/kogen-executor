@@ -9,21 +9,46 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/KogenAI/kogen-executor/internal/golden"
 )
 
 // TestPromptsAreByteEqualToTheElixirFunctions compares the length and SHA-256 of each prompt
 // with what the Elixir functions returned (testdata/gen_static.exs): the builder's,
 // reviewer's, shaper's, refine's and init's instructions, the three guidance passages and
-// the testing rules.
+// the testing rules. testdata/prompts_golden.json holds, for each prompt name, its byte count
+// and SHA-256; "go test ./... -update" rewrites it from the current output. It records the
+// prompt bytes Kogen's models have always received, so it changes only deliberately and every
+// change is reviewed as a diff of that file.
 func TestPromptsAreByteEqualToTheElixirFunctions(t *testing.T) {
+	type entry struct {
+		Bytes  int    `json:"bytes"`
+		Sha256 string `json:"sha256"`
+	}
+	// comparedText is the text the golden records: the reviewer without the LimitRaises line
+	// and with the historical sentence, to keep the historical Elixir fixture unchanged.
+	comparedText := func(name string) string {
+		text := Prompt(name)
+		if name == Reviewer {
+			text = strings.Replace(text, "\n"+LimitRaises+"\n", "", 1)
+			text = strings.Replace(text, reviewerBatchParagraph, reviewerOldSentence, 1)
+		}
+		return text
+	}
+	if golden.Update() {
+		entries := map[string]entry{}
+		for _, name := range Names() {
+			text := comparedText(name)
+			sum := sha256.Sum256([]byte(text))
+			entries[name] = entry{Bytes: len(text), Sha256: hex.EncodeToString(sum[:])}
+		}
+		golden.WriteJSON(t, "testdata/prompts_golden.json", entries)
+	}
 	data, err := os.ReadFile("testdata/prompts_golden.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var want map[string]struct {
-		Bytes  int
-		Sha256 string
-	}
+	var want map[string]entry
 	if err := json.Unmarshal(data, &want); err != nil {
 		t.Fatal(err)
 	}
@@ -36,14 +61,7 @@ func TestPromptsAreByteEqualToTheElixirFunctions(t *testing.T) {
 			if !ok {
 				t.Fatalf("no golden entry for %s", name)
 			}
-			text := Prompt(name)
-			if name == Reviewer {
-				text = strings.Replace(text, "\n"+LimitRaises+"\n", "", 1)
-			}
-			// Keep the historical Elixir fixture unchanged; only this sentence changed.
-			if name == Reviewer {
-				text = strings.Replace(text, reviewerBatchParagraph, reviewerOldSentence, 1)
-			}
+			text := comparedText(name)
 			sum := sha256.Sum256([]byte(text))
 			if len(text) != w.Bytes || hex.EncodeToString(sum[:]) != w.Sha256 {
 				t.Errorf("%s: %d bytes sha256 %x, want %d bytes sha256 %s", name, len(text), sum, w.Bytes, w.Sha256)
