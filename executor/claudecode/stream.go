@@ -38,9 +38,11 @@ type roundRun struct {
 	lines  int
 	result map[string]any // the result event, once seen
 
-	authFailed  bool // an assistant event carried error authentication_failed
-	rateLimited bool
-	pending     map[string]bool
+	authFailed     bool // an assistant event carried error authentication_failed
+	rateLimited    bool
+	rateLimitCount int
+	rateLimitInfo  map[string]any
+	pending        map[string]bool
 }
 
 // line handles one stream-json line: malformed JSON, a failed gate or a broken hook protocol
@@ -80,10 +82,44 @@ func (r *roundRun) line(b []byte) error {
 		r.toolUses(ev)
 	case "user":
 		return r.toolResults(ev)
+	case "rate_limit_event":
+		r.rateLimitCount++
+		info, _ := ev["rate_limit_info"].(map[string]any)
+		if status, ok := info["status"].(string); ok && status != "" {
+			snapshot := map[string]any{"status": limitPrefix(status)}
+			if typ, ok := info["rateLimitType"].(string); ok {
+				snapshot["rateLimitType"] = limitPrefix(typ)
+			}
+			if reset, ok := info["resetsAt"].(json.Number); ok {
+				snapshot["resetsAt"] = reset
+			}
+			r.rateLimitInfo = snapshot
+		}
 	case "result":
 		r.result = ev
 	}
 	return nil
+}
+
+// limitPrefix bounds telemetry without adding a truncation marker.
+func limitPrefix(s string) string {
+	if len(s) <= 128 {
+		return s
+	}
+	cut := 128
+	for cut > 0 && !isRuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+func (r *roundRun) addRateLimit(event map[string]any) {
+	if r.rateLimitCount != 0 {
+		event["rate_limit_event_count"] = r.rateLimitCount
+	}
+	if r.rateLimitInfo != nil {
+		event["rate_limit_info"] = r.rateLimitInfo
+	}
 }
 
 // gate is the per-round acceptance gate on the init event (audit section B).
@@ -376,12 +412,14 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 	}
 	h := s.Handle()
 	out := executor.RoundResult{Ending: ending, Claim: claim, Structured: structured, Blocker: blocker, Usage: usage, Handle: h}
-	s.emit(map[string]any{
+	event := map[string]any{
 		"event": "executor_round_ended", "role": s.role, "round": r.n, "ending": string(ending),
 		"usage": usageEvent(usage), "num_turns": turns, "permission_denials": denials,
 		"session_id": s.sessionID, "model": r.model, "claude_code_version": r.ccVersion,
 		"terminal_reason": terminal,
-	})
+	}
+	r.addRateLimit(event)
+	s.emit(event)
 	return out, nil
 }
 

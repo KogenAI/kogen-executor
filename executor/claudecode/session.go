@@ -96,14 +96,17 @@ func (s *session) Round(ctx context.Context, in executor.Input) (executor.RoundR
 		defer cancel()
 	}
 	s.emit(map[string]any{"event": "executor_round_started", "role": s.role, "round": n, "session_id": s.sessionID, "resume": n > 1})
-	res, err := s.runRound(ctx, n, prompt)
+	rr := &roundRun{s: s, n: n}
+	res, err := s.runRound(ctx, n, prompt, rr)
 	if err != nil {
 		s.failed = true
 		reason, detail := "failed", err.Error()
 		if e, ok := sys.AsError(err); ok {
 			reason, detail = e.Reason, e.Detail
 		}
-		s.emit(map[string]any{"event": "executor_round_failed", "role": s.role, "round": n, "reason": reason, "detail": bound(detail, 400)})
+		event := map[string]any{"event": "executor_round_failed", "role": s.role, "round": n, "reason": reason, "detail": bound(detail, 400)}
+		rr.addRateLimit(event)
+		s.emit(event)
 		return executor.RoundResult{}, err
 	}
 	return res, nil
@@ -131,7 +134,7 @@ func (a *adapter) FirstPromptBytes(role string, brief executor.Brief) int {
 	return len(constraintsFor(role)) + len(promptSep) + len(brief.Stable) + len(promptSep) + len(brief.Dynamic)
 }
 
-func (s *session) runRound(ctx context.Context, n int, prompt string) (executor.RoundResult, error) {
+func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundRun) (executor.RoundResult, error) {
 	if ctx.Err() != nil {
 		return executor.RoundResult{}, classify(ctx)
 	}
@@ -256,7 +259,6 @@ func (s *session) runRound(ctx context.Context, n int, prompt string) (executor.
 		}
 	}()
 
-	rr := &roundRun{s: s, n: n}
 	killed := false // the adapter ended the process
 	fail := func(err error) (executor.RoundResult, error) {
 		killed = true

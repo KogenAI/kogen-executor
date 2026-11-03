@@ -1,0 +1,39 @@
+package contract_test
+
+import (
+ "encoding/json"
+ "fmt"
+ "os"
+ "testing"
+ "github.com/KogenAI/kogen-executor/executor"
+ "kogen-loop/sys"
+)
+
+func TestRoundLimitCapture(t *testing.T) {
+ var rounds [][]string
+ if err := json.Unmarshal([]byte(os.Getenv("LIMIT_ROUNDS")), &rounds); err != nil { t.Fatal(err) }
+ r, err := startFake(t, executor.RoleBuild, rounds)
+ if err != nil { t.Fatal(err) }
+ for i := range rounds {
+  in := executor.Input{}
+  if i > 0 { in.Feedback = "continue" }
+  _, err := r.session.Round(t.Context(), in)
+  reason := ""
+  if err != nil {
+   if e, ok := sys.AsError(err); ok { reason = e.Reason } else { t.Fatal(err) }
+  }
+  name := "executor_round_ended"
+  if err != nil { name = "executor_round_failed" }
+  events := r.events.named(name)
+  if len(events) == 0 { t.Fatal("round emitted no terminal event") }
+  ev := events[len(events)-1]
+  out := map[string]any{"reason": reason}
+  for _, key := range []string{"rate_limit_info", "rate_limit_event_count"} {
+   if v, ok := ev[key]; ok { out[key] = v }
+  }
+  b, err := json.Marshal(out)
+  if err != nil { t.Fatal(err) }
+  fmt.Println("LIMIT_CAPTURE=" + string(b))
+  if err != nil { break }
+ }
+}
