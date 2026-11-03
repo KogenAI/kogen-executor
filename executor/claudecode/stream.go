@@ -38,6 +38,8 @@ type roundRun struct {
 	targets   map[string]target // tool_use_id -> the guarded call's target as of its tool_use line
 	arguments map[string]any    // tool_use_id -> the call's redacted, bounded input as of its tool_use line
 
+	hookLog sentinelLog
+
 	lines  int
 	result map[string]any // the result event, once seen
 
@@ -286,7 +288,7 @@ func (r *roundRun) toolResults(ev map[string]any) error {
 		}
 		denied := metas[id] == "reject"
 		if _, ok := r.guarded[id]; ok {
-			recs, err := readSentinels(r.s.pol.Log, r.s.pol.Nonce)
+			recs, err := r.hookLog.read(r.s.pol.Log, r.s.pol.Nonce)
 			if err != nil {
 				return executor.Fail(executor.ReasonProtocol, "cannot read the hook log: "+bound(err.Error(), 100))
 			}
@@ -318,7 +320,9 @@ func (r *roundRun) toolResults(ev map[string]any) error {
 }
 
 // target is the file-system state of a guarded call's target path: observable (absent, or a
-// regular file with its mode, size, modification time and content digest) or not.
+// regular file at most 1 MiB with its mode, size, modification time and content digest) or not.
+// Without hook evidence an oversized target cannot qualify as a rejected-before-hook
+// unchanged target, even on error; it causes an executor/protocol stop.
 type target struct {
 	path       string // absolute; empty when the call named no path
 	observable bool
@@ -343,6 +347,8 @@ func observeTarget(root string, input map[string]any) target {
 	return target{}
 }
 
+const maxTargetDigest = 1 << 20
+
 func observePath(p string) target {
 	t := target{path: p}
 	fi, err := os.Stat(p) // follows symlinks, as a write does
@@ -350,7 +356,7 @@ func observePath(p string) target {
 		t.observable, t.absent = true, true
 		return t
 	}
-	if err != nil || !fi.Mode().IsRegular() {
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxTargetDigest {
 		return target{path: p}
 	}
 	f, err := os.Open(p)
@@ -359,7 +365,9 @@ func observePath(p string) target {
 	}
 	defer f.Close()
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	n, err := io.Copy(h, io.LimitReader(f, maxTargetDigest))
+	after, statErr := f.Stat()
+	if err != nil || statErr != nil || n != fi.Size() || after.Size() != fi.Size() || after.Mode() != fi.Mode() || !after.ModTime().Equal(fi.ModTime()) {
 		return target{path: p}
 	}
 	t.observable, t.mode, t.size, t.mtime = true, fi.Mode(), fi.Size(), fi.ModTime()

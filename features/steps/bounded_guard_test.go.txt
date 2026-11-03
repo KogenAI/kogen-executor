@@ -1,0 +1,110 @@
+package claudecode
+
+import (
+ "context"
+ "encoding/json"
+ "fmt"
+ "os"
+ "path/filepath"
+ "strconv"
+ "strings"
+ "testing"
+ "time"
+
+ "github.com/KogenAI/kogen-executor/executor"
+ "github.com/KogenAI/kogen-executor/executor/conformance"
+)
+
+func guardCheck(t *testing.T, label string, got, want bool) {
+ t.Helper()
+ if got != want { t.Fatalf("guard observation mismatch %s: got %v want %v", label, got, want) }
+}
+func guardReadBytes(t *testing.T) int64 {
+ t.Helper()
+ b, err := os.ReadFile("/proc/self/io")
+ if err != nil { t.Fatal("Linux synthetic read accounting: ", err) }
+ for _, l := range strings.Split(string(b), "\n") {
+  if strings.HasPrefix(l, "rchar: ") { n, e := strconv.ParseInt(strings.TrimSpace(strings.TrimPrefix(l,"rchar:")),10,64); if e != nil { t.Fatal(e) }; return n }
+ }
+ t.Fatal("no rchar counter"); return 0
+}
+func guardRound(t *testing.T) *roundRun {
+ return &roundRun{s:&session{root:t.TempDir(), role:"build", sessionID:"s", pol:policy{Log:filepath.Join(t.TempDir(),"log"), Nonce:"mine"}, emit:func(map[string]any){}}, init:true}
+}
+func guardLine(t *testing.T, r *roundRun, v any) error {
+ t.Helper(); b,e:=json.Marshal(v); if e!=nil {t.Fatal(e)}; return r.line(b)
+}
+func guardAnnounce(t *testing.T,r *roundRun,id,path string) {
+ t.Helper(); e:=guardLine(t,r,map[string]any{"type":"assistant","message":map[string]any{"content":[]any{map[string]any{"type":"tool_use","id":id,"name":"Edit","input":map[string]any{"file_path":path}}}}}); if e!=nil {t.Fatal(e)}
+}
+func guardResult(t *testing.T,r *roundRun,id string,isErr bool) error {
+ return guardLine(t,r,map[string]any{"type":"user","message":map[string]any{"content":[]any{map[string]any{"type":"tool_result","tool_use_id":id,"is_error":isErr}}}})
+}
+func guardRecord(id,nonce,decision string) string {return fmt.Sprintf("{\"hook\":\"pretool\",\"nonce\":%q,\"tool_use_id\":%q,\"decision\":%q}\n",nonce,id,decision)}
+func guardAppend(t *testing.T,p,s string) {
+ t.Helper(); f,e:=os.OpenFile(p,os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600); if e!=nil {t.Fatal(e)}; _,e=f.WriteString(s); c:=f.Close(); if e!=nil {t.Fatal(e)}; if c!=nil {t.Fatal(c)}
+}
+func TestBoundedGuardAcceptance(t *testing.T) {
+ mode:=os.Getenv("BOUNDED_GUARD_MODE")
+ if mode=="good" || mode=="bad" {
+  // Actual baseline observations, not fabricated runner text. Exercise every
+  // predicate used below with both truth values, independently of feature red.
+  p:=filepath.Join(t.TempDir(),"small"); if e:=os.WriteFile(p,[]byte("old"),0600); e!=nil {t.Fatal(e)}
+  observed:=observePath(p)
+  guardCheck(t,"observable",observed.observable,true)
+  guardCheck(t,"unchanged",observed.unchanged(),true)
+  for _,label:=range []string{"observable","unchanged","read budget","hook result","partial completion","cancellation"} {
+   guardCheck(t,label,observed.observable,true)
+   if mode=="bad" {
+    // Verify rejection for every label without stopping at the first failure.
+    if t.Run(label,func(t *testing.T){guardCheck(t,label,!observed.observable,true)}) {t.Fatal("bad predicate accepted")}
+   }
+  }
+  fmt.Println("BOUNDED_GUARD_OK"); return
+ }
+ switch mode {
+ case "target":
+  const limit=1<<20
+  for _,size:=range []int64{limit-1,limit,limit+1,1<<34} {
+   r:=guardRound(t); p:=filepath.Join(r.s.root,"target"); f,e:=os.Create(p); if e!=nil {t.Fatal(e)}; if e=f.Truncate(size); e!=nil {t.Fatal(e)}; f.Close()
+   before:=guardReadBytes(t); guardAnnounce(t,r,"x",p); used:=guardReadBytes(t)-before
+   guardCheck(t,"read budget",used<=limit+16384,true)
+   guardCheck(t,"observable",r.targets["x"].observable,size<=limit)
+   err:=guardResult(t,r,"x",true)
+   guardCheck(t,"unchanged rejected before hook",err==nil,size<=limit)
+   if err!=nil {wantError(t,err,"executor/protocol")}
+  }
+ case "log":
+  r:=guardRound(t); var b strings.Builder
+  for i:=0;i<10000;i++ {b.WriteString(guardRecord(fmt.Sprint(i),"mine","allow"))}
+  guardAppend(t,r.s.pol.Log,b.String()); before:=guardReadBytes(t)
+  for i:=0;i<100;i++ {id:=fmt.Sprint(i); guardAnnounce(t,r,id,""); if e:=guardResult(t,r,id,false); e!=nil {t.Fatal(e)}}
+  used:=guardReadBytes(t)-before
+  guardCheck(t,"read budget",used<=int64(b.Len())+65536,true)
+ case "protocol":
+  for _,c:=range []struct{name,record string; isErr,wantOK bool}{
+   {"missing","",false,false}, {"denial ran",guardRecord("x","mine","deny"),false,false},
+   {"denial blocked",guardRecord("x","mine","deny"),true,true}, {"stale nonce",guardRecord("x","stale","allow"),false,false},
+   {"allow",guardRecord("x","mine","allow"),false,true},
+  } {t.Run(c.name,func(t *testing.T){r:=guardRound(t);guardAppend(t,r.s.pol.Log,c.record);guardAnnounce(t,r,"x","");e:=guardResult(t,r,"x",c.isErr);guardCheck(t,"hook result",e==nil,c.wantOK);if e!=nil {wantError(t,e,"executor/protocol")}})}
+  // The partial line belongs to a later call, while the first call succeeds.
+  r:=guardRound(t); full:=guardRecord("later","mine","allow"); cut:=len(full)/2
+  guardAppend(t,r.s.pol.Log,guardRecord("first","mine","allow")+full[:cut]);guardAnnounce(t,r,"first","");if e:=guardResult(t,r,"first",false);e!=nil {t.Fatal(e)}
+  guardAppend(t,r.s.pol.Log,full[cut:]);guardAnnounce(t,r,"later","");guardCheck(t,"partial completion",guardResult(t,r,"later",false)==nil,true)
+ case "unchanged":
+  t.Run("rejected before hook", TestRejectedBeforeHookContinues)
+  t.Run("hookless", TestHooklessCallStillStops)
+  t.Run("denial ran", TestDeniedWriteThatRanIsProtocolFailure)
+  t.Run("stale log", TestHookLivenessIgnoresBashAndStaleLog)
+ case "cancel":
+  h:=newHarness(t,fakeConfig{Script:oneRound(conformance.RoundScript{Actions:[]conformance.Action{{Write:&conformance.WriteAction{Path:"huge",Content:"replacement"}},{Shell:"sleep 30"}},End:"finish"})})
+  f,e:=os.Create(filepath.Join(h.root,"huge"));if e!=nil {t.Fatal(e)};if e=f.Truncate(1<<34);e!=nil {t.Fatal(e)};f.Close()
+  o:=h.f.options();o.KillGrace=300*time.Millisecond;s,e:=h.start(o);if e!=nil {t.Fatal(e)};defer s.Close()
+  ctx,cancel:=context.WithCancel(context.Background());defer cancel();time.AfterFunc(500*time.Millisecond,cancel)
+  start:=time.Now();_,e=s.Round(ctx,executor.Input{});wantError(t,e,"executor/interrupted")
+  // Normal grace plus a small local scheduling allowance, not child completion.
+  guardCheck(t,"cancellation",time.Since(start)<1800*time.Millisecond,true)
+ default:t.Fatal("unknown mode ",mode)
+ }
+ if !t.Failed() {fmt.Println("BOUNDED_GUARD_OK")}
+}

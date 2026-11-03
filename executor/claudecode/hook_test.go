@@ -252,11 +252,13 @@ func TestSentinelLogAppendsAndIsPrivate(t *testing.T) {
 	if fi, err := os.Stat(h.log); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("log mode: %v %v", fi, err)
 	}
-	recs, err := readSentinels(h.log, "n1")
+	var log sentinelLog
+	recs, err := log.read(h.log, "n1")
 	if err != nil || len(recs) != 2 || recs["t2"].Decision != "allow" {
 		t.Fatalf("readSentinels: %+v %v", recs, err)
 	}
-	if recs, _ := readSentinels(h.log, "other"); len(recs) != 0 {
+	var other sentinelLog
+	if recs, _ := other.read(h.log, "other"); len(recs) != 0 {
 		t.Fatal("a record of another nonce counted")
 	}
 }

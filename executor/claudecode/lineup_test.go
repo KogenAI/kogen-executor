@@ -360,7 +360,8 @@ func TestClaudeLineupRoleCustody(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(h.root, "proposed.txt")); err == nil {
 			t.Fatal("the shaper wrote into the checkout")
 		}
-		recs, _ := readSentinels(filepath.Join(h.task.Dir, "hook-log.jsonl"), mustPolicyNonce(t, h.task.Dir))
+		var log sentinelLog
+		recs, _ := log.read(filepath.Join(h.task.Dir, "hook-log.jsonl"), mustPolicyNonce(t, h.task.Dir))
 		denied := 0
 		for _, r := range recs {
 			if r.Decision == "deny" {

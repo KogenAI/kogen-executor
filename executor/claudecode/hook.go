@@ -265,17 +265,38 @@ func hasGitComponent(rel string) bool {
 	return false
 }
 
-// readSentinels returns the pretool records of the log for the nonce, keyed by tool_use_id.
-func readSentinels(log, nonce string) (map[string]sentinel, error) {
-	b, err := os.ReadFile(log)
+// sentinelLog tracks the append-only hook log for one round. A trailing partial
+// record is held until its newline is written.
+type sentinelLog struct {
+	offset  int64
+	partial []byte
+	records map[string]sentinel
+}
+
+func (l *sentinelLog) read(log, nonce string) (map[string]sentinel, error) {
+	f, err := os.Open(log)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return map[string]sentinel{}, nil
 		}
 		return nil, err
 	}
-	out := map[string]sentinel{}
-	for _, line := range strings.Split(string(b), "\n") {
+	defer f.Close()
+	if _, err = f.Seek(l.offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	l.offset += int64(len(b))
+	b = append(l.partial, b...)
+	lines := strings.Split(string(b), "\n")
+	l.partial = []byte(lines[len(lines)-1])
+	if l.records == nil {
+		l.records = map[string]sentinel{}
+	}
+	for _, line := range lines[:len(lines)-1] {
 		if line == "" {
 			continue
 		}
@@ -283,7 +304,7 @@ func readSentinels(log, nonce string) (map[string]sentinel, error) {
 		if json.Unmarshal([]byte(line), &r) != nil || r.Hook != "pretool" || r.Nonce != nonce || r.ToolUseID == "" {
 			continue
 		}
-		out[r.ToolUseID] = r
+		l.records[r.ToolUseID] = r
 	}
-	return out, nil
+	return l.records, nil
 }
