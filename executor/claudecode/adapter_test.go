@@ -815,6 +815,10 @@ func TestRoundResultsAndEvents(t *testing.T) {
 	if tools[0]["name"] != "Write" || tools[0]["denied"] != true || tools[1]["denied"] != false || tools[2]["name"] != "Bash" {
 		t.Fatalf("tool events %v", tools)
 	}
+	if tools[0]["result_bytes"] != len("PreToolUse:Write hook error: denied") || tools[0]["result_items"] != 1 || tools[0]["result_error"] != true ||
+		tools[2]["result_bytes"] != len("hi\n") || tools[2]["result_items"] != 1 || tools[2]["result_error"] != false {
+		t.Fatalf("tool telemetry %v", tools)
+	}
 	hooks := h.eventsNamed("executor_hook")
 	if len(hooks) != 2 || hooks[0]["decision"] != "deny" || hooks[1]["decision"] != "allow" || hooks[0]["tool_use_id"] == "" {
 		t.Fatalf("hook events %v", hooks)

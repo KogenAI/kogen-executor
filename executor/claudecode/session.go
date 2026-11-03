@@ -335,7 +335,7 @@ loop:
 			// caught however the pipe chunked it and never reaches events or the claim.
 			line := []byte(s.a.redact(string(m.line)))
 			raw.Write(append(append([]byte{}, line...), '\n'))
-			if err := rr.line(line); err != nil {
+			if err := rr.lineReceived(line, m.line); err != nil {
 				return fail(err)
 			}
 			if rr.result != nil && drain == nil {

@@ -114,6 +114,10 @@ func (r *roundRun) addProfile(event map[string]any) {
 // line handles one stream-json line: malformed JSON, a failed gate or a broken hook protocol
 // is a typed error and the caller stops the process group.
 func (r *roundRun) line(b []byte) error {
+	return r.lineReceived(b, b)
+}
+
+func (r *roundRun) lineReceived(b, received []byte) error {
 	r.lines++
 	ev, err := decodeObject(b)
 	if err != nil {
@@ -154,7 +158,8 @@ func (r *roundRun) line(b []byte) error {
 		}
 		r.toolUses(ev)
 	case "user":
-		return r.toolResults(ev)
+		original, _ := decodeObject(received)
+		return r.toolResults(ev, original)
 	case "rate_limit_event":
 		r.rateLimitCount++
 		info, _ := ev["rate_limit_info"].(map[string]any)
@@ -265,7 +270,7 @@ func (r *roundRun) toolUses(ev map[string]any) {
 // toolResults emits tool events and enforces hook liveness: a guarded tool call that completed
 // (or was denied) must have a sentinel record from the hook, and a hook denial must have
 // actually blocked the call.
-func (r *roundRun) toolResults(ev map[string]any) error {
+func (r *roundRun) toolResults(ev, original map[string]any) error {
 	metas := map[string]string{} // tool_use_id -> permission decision
 	if list, ok := ev["tool_result_meta"].([]any); ok {
 		for _, m := range list {
@@ -275,12 +280,19 @@ func (r *roundRun) toolResults(ev map[string]any) error {
 			metas[id], _ = pd["decision"].(string)
 		}
 	}
-	for _, c := range contentItems(ev) {
+	originalItems := contentItems(original)
+	for i, c := range contentItems(ev) {
 		if t, _ := c["type"].(string); t != "tool_result" {
 			continue
 		}
 		id, _ := c["tool_use_id"].(string)
 		isErr, _ := c["is_error"].(bool)
+		var result map[string]any
+		if i < len(originalItems) {
+			result = originalItems[i]
+		}
+		size, items := resultSize(result["content"])
+		resultErr, _ := result["is_error"].(bool)
 		delete(r.pending, id)
 		name, known := r.toolNames[id]
 		if !known {
@@ -295,12 +307,12 @@ func (r *roundRun) toolResults(ev map[string]any) error {
 			rec, ok := recs[id]
 			if !ok && r.s.role == "shape" {
 				r.s.emit(map[string]any{"event": "executor_hook", "round": r.n, "tool_use_id": id, "tool_name": name, "decision": "deny", "hook": "configuration", "message": "write tools are not available during Shape"})
-				r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": true, "arguments": r.arguments[id]})
+				r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": true, "arguments": r.arguments[id], "result_bytes": size, "result_error": resultErr, "result_items": items})
 				continue
 			}
 			if !ok && isErr && r.targets[id].unchanged() {
 				// Claude Code refused the call before the hook and nothing was written.
-				r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": false, "rejected_before_hook": true, "arguments": r.arguments[id]})
+				r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": false, "rejected_before_hook": true, "arguments": r.arguments[id], "result_bytes": size, "result_error": resultErr, "result_items": items})
 				continue
 			}
 			if !ok {
@@ -314,9 +326,28 @@ func (r *roundRun) toolResults(ev map[string]any) error {
 				}
 			}
 		}
-		r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": denied, "arguments": r.arguments[id]})
+		r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": denied, "arguments": r.arguments[id], "result_bytes": size, "result_error": resultErr, "result_items": items})
 	}
 	return nil
+}
+
+// resultSize counts decoded text bytes and content items without retaining the content.
+func resultSize(content any) (int, int) {
+	switch v := content.(type) {
+	case string:
+		return len(v), 1
+	case []any:
+		size := 0
+		for _, item := range v {
+			block, _ := item.(map[string]any)
+			if typ, _ := block["type"].(string); typ == "text" {
+				text, _ := block["text"].(string)
+				size += len(text)
+			}
+		}
+		return size, len(v)
+	}
+	return 0, 0
 }
 
 // target is the file-system state of a guarded call's target path: observable (absent, or a
