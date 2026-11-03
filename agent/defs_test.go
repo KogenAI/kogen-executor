@@ -2,73 +2,35 @@ package agent
 
 import (
 	"encoding/json"
-	"os"
 	"reflect"
 	"testing"
 
-	"github.com/KogenAI/kogen-executor/internal/golden"
 	"kogen-loop/tools"
 )
 
-// everyTool is the seventeen definitions: kogen-loop's generic tools and Kogen's own.
-var everyTool = []string{tools.ShellTool, tools.ViewImageTool, tools.ReadFileTool, tools.WriteFileTool, ReportBlockerTool, FinishTool,
-	tools.ListFilesTool, tools.SearchTextTool, ProbeTool, tools.DocumentationTool, ProposeFilesTool, SubmitTool, SubmitReviewTool, SubmitRefinementTool,
-	SubmitConfigurationTool, ShapeBatchTool, WorkerResultTool}
+// everyTool is the seven generic tools. Kogen's own tools (finish, report_blocker, probe,
+// propose_files, the submit_* tools, shape_batch and worker_result) moved with their recorded
+// definitions to the phases that own them (kogen-build, kogen-shaping, kogen-setup,
+// kogen-review).
+var everyTool = []string{tools.ShellTool, tools.ViewImageTool, tools.ReadFileTool, tools.WriteFileTool,
+	tools.ListFilesTool, tools.SearchTextTool, tools.DocumentationTool}
 
-// TestDefinitionsMatchTheElixirDefinitions compares every Kogen-owned tool definition (finish,
-// report_blocker, probe, propose_files, the submit_* definitions of shape, review, refine and
-// init, shape_batch and worker_result) with testdata/defs_golden.json, as parsed values. A
-// generic tool belongs to the pinned loop: the test checks that Kogen offers the definition
-// tools.Definition returns, unchanged, and the golden holds none of them. The golden maps each
-// Kogen-owned tool name to its definition; "go test ./... -update" rewrites it from the
-// current output.
+// TestDefinitionsMatchTheElixirDefinitions checks that every definition Defs returns is the
+// pinned loop's own: a generic tool belongs to kogen-loop, and Kogen offers the definition
+// tools.Definition returns, unchanged.
 func TestDefinitionsMatchTheElixirDefinitions(t *testing.T) {
-	if golden.Update() {
-		defs := map[string]any{}
-		for _, name := range everyTool {
-			if _, loop := tools.Definition(name); loop {
-				continue
-			}
-			var def any
-			if err := json.Unmarshal(mustJSON(t, Defs(name)[0]), &def); err != nil {
-				t.Fatal(err)
-			}
-			defs[name] = def
-		}
-		golden.WriteJSON(t, "testdata/defs_golden.json", defs)
-	}
-	data, err := os.ReadFile("testdata/defs_golden.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var want map[string]any
-	if err := json.Unmarshal(data, &want); err != nil {
-		t.Fatal(err)
-	}
-	owned := 0
-	for _, name := range everyTool {
-		if _, loop := tools.Definition(name); !loop {
-			owned++
-		}
-	}
-	if owned != len(want) {
-		t.Fatalf("%d Kogen-owned names, golden has %d", owned, len(want))
-	}
 	for _, name := range everyTool {
 		t.Run(name, func(t *testing.T) {
 			var got, expected any
 			if err := json.Unmarshal(mustJSON(t, Defs(name)[0]), &got); err != nil {
 				t.Fatal(err)
 			}
-			if pinned, loop := tools.Definition(name); loop {
-				if _, stored := want[name]; stored {
-					t.Fatalf("golden stores the loop-owned definition %s", name)
-				}
-				if err := json.Unmarshal(mustJSON(t, pinned), &expected); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				expected = want[name]
+			pinned, loop := tools.Definition(name)
+			if !loop {
+				t.Fatalf("%s is not a loop-owned tool", name)
+			}
+			if err := json.Unmarshal(mustJSON(t, pinned), &expected); err != nil {
+				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(got, expected) {
 				t.Errorf("definition differs\n got: %s\nwant: %s", mustJSON(t, got), mustJSON(t, expected))
@@ -78,19 +40,19 @@ func TestDefinitionsMatchTheElixirDefinitions(t *testing.T) {
 }
 
 func TestDefsKeepTheOrderAskedFor(t *testing.T) {
-	defs := Defs(tools.ShellTool, tools.ReadFileTool, FinishTool)
+	defs := Defs(tools.ShellTool, tools.ReadFileTool, tools.ListFilesTool)
 	var names []string
 	for _, d := range defs {
 		names = append(names, d["name"].(string))
 	}
-	if !reflect.DeepEqual(names, []string{"shell", "read_file", "finish"}) {
+	if !reflect.DeepEqual(names, []string{"shell", "read_file", "list_files"}) {
 		t.Errorf("names %v", names)
 	}
 	if got := Defs(); len(got) != 0 {
 		t.Errorf("Defs() = %v", got)
 	}
-	list := AsAny(Defs(tools.ShellTool), Defs(FinishTool, ProbeTool))
-	if len(list) != 3 || list[2].(map[string]any)["name"] != "probe" {
+	list := AsAny(Defs(tools.ShellTool), Defs(tools.ListFilesTool, tools.SearchTextTool))
+	if len(list) != 3 || list[2].(map[string]any)["name"] != "search_text" {
 		t.Errorf("AsAny = %v", list)
 	}
 }
@@ -117,4 +79,13 @@ func TestEveryDefinitionIsPlainJSON(t *testing.T) {
 	for _, name := range everyTool {
 		walk(name, Defs(name)[0])
 	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

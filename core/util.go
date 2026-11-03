@@ -3,7 +3,6 @@ package core
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -24,32 +23,26 @@ func NonNil[T any](s []T) []T {
 	return s
 }
 
+// EncodeJSON is the JSON of v without HTML escaping and without the final newline.
+func EncodeJSON(v any) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+}
+
 // HashHex is the SHA-256 of b in hex.
 func HashHex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
 
-// DecodeBase64 decodes standard base64.
-func DecodeBase64(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
-
 // ResumeRefused is the stop of a resume that is refused for detail.
 func ResumeRefused(detail string) *sys.Error {
 	return sys.Fail("candidate", "resume_refused", detail, 1)
-}
-
-// DecodeJSONNumbers decodes one JSON value keeping numbers as json.Number.
-func DecodeJSONNumbers(data []byte) (any, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	var v any
-	if err := dec.Decode(&v); err != nil {
-		return nil, err
-	}
-	if dec.More() {
-		return nil, fmt.Errorf("trailing data")
-	}
-	return v, nil
 }
 
 // Display is a JSON scalar as text, the way string interpolation shows it (nil is empty).

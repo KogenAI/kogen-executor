@@ -4,8 +4,9 @@
 // It pins the exported API they call, the behaviours they rely on, and the file and wire
 // formats they read or write: the executor constants, errors and Descriptor.For; the Claude
 // Code adapter's runtime layout, hook, first-prompt bytes, stream-json handling and run-log
-// events; the conformance helpers; the agent tool and prompt names, WithOriginHint and the
-// response budget; thinking.Strip; and testproc.Isolate.
+// events; the conformance helpers; the agent's generic tool definitions, shared prompt material
+// and template mechanism, WithOriginHint and the response budget; thinking.Strip; and
+// testproc.Isolate. Each phase's own prompt and submission tools are pinned by the phase.
 //
 // The cases are copied and adapted from the consumers' own tests that exercise this module,
 // pinned at kogen 9bf6073, kogen-shaping c7ba24b and kogen-build 65f9d77. They use synthetic

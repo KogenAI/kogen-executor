@@ -48,7 +48,7 @@ func TestToolsRefuseNamesThatAreNotEnabled(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	tl := newTools(root, tools.ReadFileTool)
 	os.WriteFile(filepath.Join(root, "a"), []byte("x\n"), 0o644)
-	for _, name := range []string{tools.ShellTool, tools.WriteFileTool, tools.ListFilesTool, tools.SearchTextTool, tools.ViewImageTool, ProbeTool, FinishTool, ReportBlockerTool, SubmitTool, "bogus", ""} {
+	for _, name := range []string{tools.ShellTool, tools.WriteFileTool, tools.ListFilesTool, tools.SearchTextTool, tools.ViewImageTool, "probe", "finish", "report_blocker", "submit", "bogus", ""} {
 		if got := run(t, tl, name, map[string]any{"command": "touch x", "path": "a", "content": "y", "pattern": "x"}); got != "error: unknown tool "+name {
 			t.Errorf("%q: %q", name, got)
 		}
@@ -60,16 +60,16 @@ func TestToolsRefuseNamesThatAreNotEnabled(t *testing.T) {
 		t.Errorf("read_file: %q", got)
 	}
 	// An enabled name nothing implements (a terminal tool) is also unknown.
-	tl.Enabled = append(tl.Enabled, FinishTool)
-	if got := run(t, tl, FinishTool, nil); got != "error: unknown tool finish" {
+	tl.Enabled = append(tl.Enabled, "finish")
+	if got := run(t, tl, "finish", nil); got != "error: unknown tool finish" {
 		t.Errorf("finish: %q", got)
 	}
 }
 
 func TestProbeBelongsToTheShaper(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())
-	tl := newTools(root, ProbeTool)
-	if got := run(t, tl, ProbeTool, map[string]any{"command": "true"}); got != "error: probe is not available" {
+	tl := newTools(root, "probe")
+	if got := run(t, tl, "probe", map[string]any{"command": "true"}); got != "error: probe is not available" {
 		t.Errorf("without a probe: %q", got)
 	}
 	var gotCommand string
@@ -79,18 +79,18 @@ func TestProbeBelongsToTheShaper(t *testing.T) {
 		return "exit status: 0\ntimed_out: false\nwall: 0.1 s\n", nil
 	}
 	files := []any{map[string]any{"path": "a", "content": "b"}}
-	if got := run(t, tl, ProbeTool, map[string]any{"command": "make", "files": files}); !strings.HasPrefix(got, "exit status: 0\n") {
+	if got := run(t, tl, "probe", map[string]any{"command": "make", "files": files}); !strings.HasPrefix(got, "exit status: 0\n") {
 		t.Errorf("%q", got)
 	}
 	if gotCommand != "make" || len(gotFiles.([]any)) != 1 {
 		t.Errorf("probe got %q %v", gotCommand, gotFiles)
 	}
-	if got := run(t, tl, ProbeTool, map[string]any{"command": 5}); got != "error: argument command must be a string" {
+	if got := run(t, tl, "probe", map[string]any{"command": 5}); got != "error: argument command must be a string" {
 		t.Errorf("invalid command: %q", got)
 	}
 	failure := errors.New("interrupted")
 	tl.Probe = func(string, any) (string, error) { return "", failure }
-	if _, err := tl.Run(ProbeTool, map[string]any{"command": "x"}); err != failure {
+	if _, err := tl.Run("probe", map[string]any{"command": "x"}); err != failure {
 		t.Errorf("error %v", err)
 	}
 }

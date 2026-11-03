@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -14,10 +13,10 @@ import (
 )
 
 // TestPromptsAreByteEqualToTheElixirFunctions compares the length and SHA-256 of each prompt
-// with what the Elixir functions returned (testdata/gen_static.exs): the builder's,
-// reviewer's, shaper's, refine's and init's instructions, the three guidance passages and
-// the testing rules. testdata/prompts_golden.json holds, for each prompt name, its byte count
-// and SHA-256; "go test ./... -update" rewrites it from the current output. It records the
+// with what the Elixir functions returned (testdata/gen_static.exs): the testing rules. The
+// phases' own prompts moved to the phases with their entries (kogen-shaping, kogen-setup,
+// kogen-build, kogen-review). testdata/prompts_golden.json holds, for each prompt name, its byte
+// count and SHA-256; "go test ./... -update" rewrites it from the current output. It records the
 // prompt bytes Kogen's models have always received, so it changes only deliberately and every
 // change is reviewed as a diff of that file.
 func TestPromptsAreByteEqualToTheElixirFunctions(t *testing.T) {
@@ -25,16 +24,7 @@ func TestPromptsAreByteEqualToTheElixirFunctions(t *testing.T) {
 		Bytes  int    `json:"bytes"`
 		Sha256 string `json:"sha256"`
 	}
-	// comparedText is the text the golden records: the reviewer without the LimitRaises line
-	// and with the historical sentence, to keep the historical Elixir fixture unchanged.
-	comparedText := func(name string) string {
-		text := Prompt(name)
-		if name == Reviewer {
-			text = strings.Replace(text, "\n"+LimitRaises+"\n", "", 1)
-			text = strings.Replace(text, reviewerBatchParagraph, reviewerOldSentence, 1)
-		}
-		return text
-	}
+	comparedText := Prompt
 	if golden.Update() {
 		entries := map[string]entry{}
 		for _, name := range Names() {
@@ -70,24 +60,6 @@ func TestPromptsAreByteEqualToTheElixirFunctions(t *testing.T) {
 				t.Errorf("%s has an unreplaced placeholder", name)
 			}
 		})
-	}
-}
-
-func TestShaperAndRefineShareTheGuidancePassages(t *testing.T) {
-	feasibility, acknowledgment := Prompt(FeasibilityGuidance), Prompt(ReadinessAcknowledgmentGuidance)
-	for _, name := range []string{Shaper, Refine} {
-		text := Prompt(name)
-		if strings.Count(text, feasibility) != 1 || strings.Count(text, acknowledgment) != 1 {
-			t.Errorf("%s must hold each guidance passage exactly once", name)
-		}
-	}
-	for _, name := range []string{Builder, Reviewer, Init} {
-		if strings.Contains(Prompt(name), feasibility) {
-			t.Errorf("%s holds the feasibility guidance", name)
-		}
-	}
-	if !strings.Contains(string(mustJSON(t, Defs(SubmitTool)[0])), jsonText(t, acknowledgment)) {
-		t.Error("the submit definition lost the acknowledgment guidance")
 	}
 }
 
@@ -145,45 +117,5 @@ func TestNamesListsEveryPrompt(t *testing.T) {
 	slices.Sort(names)
 	if !slices.Equal(files, names) {
 		t.Errorf("prompt files %v, names %v", files, names)
-	}
-}
-
-func mustJSON(t *testing.T, v any) []byte {
-	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return b
-}
-
-// jsonText is s as it appears inside a JSON string, without the quotes.
-func jsonText(t *testing.T, s string) string {
-	t.Helper()
-	b := mustJSON(t, s)
-	return string(b[1 : len(b)-1])
-}
-
-const reviewerOldSentence = "Read other files only to fill a context gap, and batch independent lookups."
-const reviewerBatchParagraph = "Read other files only to fill a context gap. Every request re-sends the whole conversation, so work in a few wide rounds, not one call per turn: issue all pinned-part reads and needed context lookups together in your first tool round; never re-read text already supplied inline or read earlier; then make related repairs together and run your focused probes (stated limits, empty or zero values, error paths) in one combined shell command where possible. Code that proves correct usually needs only three rounds: reads, one probe round, then submit_review. Add a round only when a result raises a new concern or a repair needs checking; after a repair, run the configured fixer and the focused tests together in one command. Never spend a round on a lone lookup or on re-confirming a result you already have."
-
-func TestReviewerBatchPromptBytesAndUnchangedSchema(t *testing.T) {
-	text := Prompt(Reviewer)
-	if strings.Count(text, LimitRaises) != 1 {
-		t.Fatal("reviewer must carry the limit rule once")
-	}
-	text = strings.Replace(text, "\n"+LimitRaises+"\n", "", 1)
-	if strings.Contains(text, reviewerOldSentence) || strings.Count(text, reviewerBatchParagraph) != 1 {
-		t.Fatal("reviewer must replace exactly the old batching sentence")
-	}
-	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(text))); got != "1ab7ff81c6b94254ac71958230859fd9c76ffc15baa25ad2552017cbd11cceb9" {
-		t.Fatalf("reviewer hash = %s", got)
-	}
-	defs, err := os.ReadFile("defs.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := fmt.Sprintf("%x", sha256.Sum256(defs)); got != "a97c1d79eedef5a705a82e06221729374c2fee783f960754c302ec200895bc10" {
-		t.Fatalf("schema source hash = %s", got)
 	}
 }

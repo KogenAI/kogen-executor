@@ -1,10 +1,13 @@
-// Package agent is what the shaper, the builder and the reviewer share that is Kogen's own:
-// the prompts Kogen gives each model and the definitions of Kogen's workflow tools (finish,
-// report_blocker, probe, the submit_* tools, shape_batch, worker_result). The generic tools
-// (read_file, write_file, list_files, search_text, shell, view_image, documentation), the cut
-// of long results and the bookkeeping of the request / tool-call loop live in kogen-loop's
-// tools package; Defs dispatches the generic names there. Every prompt byte and definition
-// is the one the models have always been given: they are part of Kogen's contract with them.
+// Package agent is what Kogen's phases share for their model conversations and is Kogen's own:
+// the mechanism a phase renders its prompt templates with (Render), the definitions of the
+// generic tools as a phase hands them to a request (Defs, AsAny), the testing rules every phase
+// that writes or judges tests carries, and the request budgets. Each phase owns its own
+// model-facing policy, the prompt and submission tools it is hill-climbed on: the shaper's and
+// Refine's in kogen-shaping, Init's in kogen-setup, the builder's in kogen-build and the
+// reviewer's in kogen-review. The generic tools (read_file, write_file, list_files,
+// search_text, shell, view_image, documentation), the cut of long results and the bookkeeping of
+// the request / tool-call loop live in kogen-loop's tools package; Defs dispatches the generic
+// names there.
 package agent
 
 import (
@@ -16,33 +19,15 @@ import (
 //go:embed prompts/*.md
 var promptFiles embed.FS
 
-// Prompt names. The text of each is in prompts/<name>.md; docs/testing-rules.md is the
-// file users read and prompts/testing-rules.md an identical copy (a test keeps them equal).
+// Prompt names. The text of each is in prompts/<name>.md; docs/testing-rules.md is the file
+// users read and prompts/testing-rules.md an identical copy (a test in kogen keeps them equal).
 const (
-	Builder                         = "builder"
-	Reviewer                        = "reviewer"
-	Shaper                          = "shaper"
-	Refine                          = "refine"
-	Init                            = "init"
-	ShaperContextGuidance           = "shaper-context-guidance"
-	ReadinessAcknowledgmentGuidance = "readiness-acknowledgment-guidance"
-	FeasibilityGuidance             = "feasibility-guidance"
-	TestingRules                    = "testing-rules"
+	TestingRules = "testing-rules"
 )
 
 // Names lists every prompt name.
 func Names() []string {
-	return []string{Builder, Reviewer, Shaper, Refine, Init, ShaperContextGuidance,
-		ReadinessAcknowledgmentGuidance, FeasibilityGuidance, TestingRules}
-}
-
-// shared are the passages that more than one prompt, or a tool definition, repeats. A
-// template names them as {{name}}.
-func shared() map[string]string {
-	return map[string]string{
-		FeasibilityGuidance:             file(FeasibilityGuidance),
-		ReadinessAcknowledgmentGuidance: file(ReadinessAcknowledgmentGuidance),
-	}
+	return []string{TestingRules}
 }
 
 func file(name string) string {
@@ -57,16 +42,8 @@ func file(name string) string {
 // (including its final newline). It panics on a name that is not one of the constants: the
 // names are fixed by the program, not by users.
 func Prompt(name string) string {
-	text := Render(file(name), shared())
-	if name == Reviewer {
-		text += "\n" + LimitRaises + "\n"
-	}
-	return text
+	return file(name)
 }
-
-// LimitRaises is the review rule on raised timeouts, retries and limits; the native reviewer
-// prompt and the external review task both carry it.
-const LimitRaises = "Limit raises: a change that raises a timeout, deadline, retry or attempt count, size or count limit, or wait duration (in code, configuration, tests or scripts, including go test -timeout, Playwright or cucumber timeouts and ExUnit timeouts) is a blocking finding unless the Intent, or a profile cited in the change, shows that the extra work is needed and cannot be removed. The finding names the file:line, the old and new value, and asks for the profile or a speed-up. Lowering a limit, or adding a new bound where none existed, is not flagged by this rule."
 
 // Render replaces each {{name}} in template with vars[name]; text without a matching
 // variable stays as it is.

@@ -1,7 +1,6 @@
 package contract_test
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -10,58 +9,53 @@ import (
 	"kogen-loop/sys"
 )
 
-const agentConsumers = "kogen-build, kogen-shaping, kogen cli"
+const agentConsumers = "kogen-build, kogen-shaping, kogen-setup, kogen-review, kogen cli"
 
+// TestAgentToolNames pins the generic tool definitions a phase hands a request beside its own:
+// agent.Defs dispatches kogen-loop's generic tools, in order, and refuses any other name; the
+// phases' own tools (finish, report_blocker, probe, propose_files, the submit_* tools,
+// shape_batch, worker_result) are defined and pinned by the phases that own them (kogen-build,
+// kogen-shaping, kogen-setup, kogen-review).
 func TestAgentToolNames(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct{ name, got, want string }{
-		{"ProbeTool", agent.ProbeTool, "probe"},
-		{"FinishTool", agent.FinishTool, "finish"},
-		{"ReportBlockerTool", agent.ReportBlockerTool, "report_blocker"},
-		{"ProposeFilesTool", agent.ProposeFilesTool, "propose_files"},
-		{"SubmitTool", agent.SubmitTool, "submit"},
-		{"SubmitReviewTool", agent.SubmitReviewTool, "submit_review"},
-		{"SubmitRefinementTool", agent.SubmitRefinementTool, "submit_refinement"},
-		{"SubmitConfigurationTool", agent.SubmitConfigurationTool, "submit_configuration"},
-		{"ShapeBatchTool", agent.ShapeBatchTool, "shape_batch"},
-		{"WorkerResultTool", agent.WorkerResultTool, "worker_result"},
-	} {
-		eq(t, "agent."+c.name+" value ("+agentConsumers+")", c.got, c.want)
-		defs := agent.Defs(c.want)
+	for _, name := range []string{"shell", "view_image", "read_file", "write_file", "list_files", "search_text", "documentation"} {
+		defs := agent.Defs(name)
 		if len(defs) != 1 {
-			t.Errorf("agent.Defs(%q) returns %d definitions, want 1 (%s)", c.want, len(defs), agentConsumers)
+			t.Errorf("agent.Defs(%q) returns %d definitions, want 1 (%s)", name, len(defs), agentConsumers)
 			continue
 		}
-		eq(t, "agent.Defs("+c.want+") name ("+agentConsumers+")", defs[0]["name"], any(c.want))
+		eq(t, "agent.Defs("+name+") name ("+agentConsumers+")", defs[0]["name"], any(name))
 	}
-	flat := agent.AsAny(agent.Defs(agent.ProbeTool), agent.Defs(agent.FinishTool, agent.SubmitTool))
+	for _, name := range []string{"finish", "submit_review", "submit"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("agent.Defs(%q) defined a phase's own tool (%s)", name, agentConsumers)
+				}
+			}()
+			agent.Defs(name)
+		}()
+	}
+	flat := agent.AsAny(agent.Defs("shell"), agent.Defs("read_file", "list_files"))
 	eq(t, "agent.AsAny flattens definitions ("+agentConsumers+")", len(flat), 3)
 }
 
+// TestAgentPrompts pins the shared prompt material and the template mechanism: the testing
+// rules (kogen cli/testing_rules_test.go, kogen-build builder.go and material.go, kogen-shaping
+// refine.go and context.go) and agent.Render, with which a phase renders its own prompt
+// templates (kogen-shaping shape/policy.go).
 func TestAgentPrompts(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct{ name, got, want string }{
-		{"Builder", agent.Builder, "builder"},
-		{"Reviewer", agent.Reviewer, "reviewer"},
-		{"Shaper", agent.Shaper, "shaper"},
-		{"Refine", agent.Refine, "refine"},
-		{"Init", agent.Init, "init"},
-		{"ShaperContextGuidance", agent.ShaperContextGuidance, "shaper-context-guidance"},
-		{"ReadinessAcknowledgmentGuidance", agent.ReadinessAcknowledgmentGuidance, "readiness-acknowledgment-guidance"},
-		{"FeasibilityGuidance", agent.FeasibilityGuidance, "feasibility-guidance"},
-		{"TestingRules", agent.TestingRules, "testing-rules"},
-	} {
-		eq(t, "agent."+c.name+" value ("+agentConsumers+")", c.got, c.want)
-	}
+	eq(t, "agent.TestingRules value ("+agentConsumers+")", agent.TestingRules, "testing-rules")
 	names := agent.Names()
-	eq(t, "agent.Names count ("+agentConsumers+")", len(names), 9)
+	eq(t, "agent.Names count ("+agentConsumers+")", len(names), 1)
 	for _, name := range names {
 		if agent.Prompt(name) == "" {
 			t.Errorf("agent.Prompt(%q) is empty (%s)", name, agentConsumers)
 		}
 	}
-	eq(t, "agent.Prompt(Reviewer) carries LimitRaises exactly once (kogen-build review_lineup_test.go review_parts.go)",
-		strings.Count(agent.Prompt(agent.Reviewer), "\n"+agent.LimitRaises+"\n"), 1)
+	eq(t, "agent.Render replaces each {{name}} (kogen-shaping shape/policy.go)",
+		agent.Render("{{a}} and {{b}}, not {{c}}", map[string]string{"a": "x", "b": "{{a}}"}), "x and {{a}}, not {{c}}")
 }
 
 func TestWithOriginHint(t *testing.T) {
