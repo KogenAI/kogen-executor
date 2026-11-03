@@ -19,7 +19,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -67,9 +66,6 @@ func New(opts Options) executor.Executor {
 type adapter struct {
 	opts         Options
 	goos, goarch string
-
-	mu      sync.Mutex
-	version string // exact `claude --version` output, trimmed
 }
 
 // Describe reports the executor's capabilities and exact version. It never fails: an
@@ -145,13 +141,8 @@ func (a *adapter) childEnv(home, token string) []string {
 	return childEnv(a.opts.Env, home, token, ConfigDir(a.opts.Home))
 }
 
-// claudeVersion is the cached exact `claude --version` output.
+// claudeVersion observes the currently managed executable on each call.
 func (a *adapter) claudeVersion(ctx context.Context) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.version != "" {
-		return a.version, nil
-	}
 	bin, err := a.binary()
 	if err != nil {
 		return "", err
@@ -164,7 +155,6 @@ func (a *adapter) claudeVersion(ctx context.Context) (string, error) {
 	if v == "" || strings.Contains(v, "\n") || len(v) > 200 {
 		return "", executor.Fail(executor.ReasonUnavailable, "`claude --version` printed an unexpected answer")
 	}
-	a.version = v
 	return v, nil
 }
 
