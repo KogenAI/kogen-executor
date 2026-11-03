@@ -33,6 +33,7 @@ type roundRun struct {
 	toolNames map[string]string // tool_use_id -> tool name
 	guarded   map[string]string // tool_use_id -> tool name, guarded tools only
 	targets   map[string]target // tool_use_id -> the guarded call's target as of its tool_use line
+	arguments map[string]any    // tool_use_id -> the call's redacted, bounded input as of its tool_use line
 
 	lines  int
 	result map[string]any // the result event, once seen
@@ -127,6 +128,12 @@ func (r *roundRun) toolUses(ev map[string]any) {
 			r.toolNames, r.guarded, r.targets = map[string]string{}, map[string]string{}, map[string]target{}
 		}
 		r.toolNames[id] = name
+		if r.arguments == nil {
+			r.arguments = map[string]any{}
+		}
+		if _, seen := r.arguments[id]; !seen {
+			r.arguments[id] = r.s.toolArguments(c["input"])
+		}
 		if r.pending == nil {
 			r.pending = map[string]bool{}
 		}
@@ -174,12 +181,12 @@ func (r *roundRun) toolResults(ev map[string]any) error {
 			rec, ok := recs[id]
 			if !ok && r.s.role == "shape" {
 				r.s.emit(map[string]any{"event": "executor_hook", "round": r.n, "tool_use_id": id, "tool_name": name, "decision": "deny", "hook": "configuration", "message": "write tools are not available during Shape"})
-				r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": true})
+				r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": true, "arguments": r.arguments[id]})
 				continue
 			}
 			if !ok && isErr && r.targets[id].unchanged() {
 				// Claude Code refused the call before the hook and nothing was written.
-				r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": false, "rejected_before_hook": true})
+				r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": false, "rejected_before_hook": true, "arguments": r.arguments[id]})
 				continue
 			}
 			if !ok {
@@ -193,7 +200,7 @@ func (r *roundRun) toolResults(ev map[string]any) error {
 				}
 			}
 		}
-		r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": denied})
+		r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": denied, "arguments": r.arguments[id]})
 	}
 	return nil
 }
