@@ -134,7 +134,8 @@ func (s Script) RoleOf() string {
 	return s.Role
 }
 
-// SchemaFor is the schema every non-build conformance script submits against.
+// SchemaFor is the schema every conformance script's task carries (an executor that requests
+// schema-constrained output needs one for every role).
 const SchemaFor = `{"type":"object","additionalProperties":true}`
 
 // Driver makes one executor's backend perform scripts.
@@ -207,9 +208,7 @@ func runScript(t *testing.T, d Driver, s Script) {
 		t.Fatalf("descriptor name %q, driver %q", desc.Name, d.Name())
 	}
 	task.Role, task.Root = s.RoleOf(), root
-	if task.Role != executor.RoleBuild {
-		task.Schema = json.RawMessage(SchemaFor)
-	}
+	task.Schema = json.RawMessage(SchemaFor)
 	task.Protected = []string{ProtectedPath}
 	if s.DeadlineSeconds > 0 {
 		task.Deadline = time.Now().Add(time.Duration(s.DeadlineSeconds * float64(time.Second)))

@@ -427,6 +427,8 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 				return executor.RoundResult{}, executor.Fail(executor.ReasonProtocol, "the success result has no result text")
 			}
 			claim = boundBytes(text, claimBytes)
+			// The Build's submission schema is its own (the task's); of its result the adapter
+			// reads only the executor contract's blocker claim.
 			if obj, isObj := res["structured_output"].(map[string]any); isObj {
 				if raw, has := obj["blocker"]; has && raw != nil {
 					ending = executor.EndBlocker

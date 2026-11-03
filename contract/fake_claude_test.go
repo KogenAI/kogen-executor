@@ -162,7 +162,7 @@ func (l *eventLog) named(name string) []map[string]any {
 	return out
 }
 
-// schemaObject is the schema of the structured submission of Shape and Review.
+// schemaObject is the schema of the structured submission every role's task hands the adapter.
 const schemaObject = `{"type":"object"}`
 
 // startFake installs a fake with the rounds, starts a session for the role on a fresh
@@ -183,10 +183,7 @@ func startFake(t *testing.T, role string, rounds [][]string, opts ...fakeOptions
 		Role: role, Root: checkout, Protected: []string{conformance.ProtectedPath},
 		Brief: executor.Brief{Stable: "STABLE authority\n", Dynamic: "dynamic evidence"},
 		Model: "claude-sonnet-5-5", Home: home, Dir: filepath.Join(t.TempDir(), "executor"),
-		RunID: "run-1",
-	}
-	if role != executor.RoleBuild {
-		task.Schema = json.RawMessage(schemaObject)
+		RunID: "run-1", Schema: json.RawMessage(schemaObject),
 	}
 	s, err := r.ex.Start(t.Context(), task, r.events.emit)
 	if err != nil {

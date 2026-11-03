@@ -76,7 +76,7 @@ func TestBuildWakeupDeniedEveryRound(t *testing.T) {
 			}
 			rest = append(rest, argv[j])
 		}
-		for _, want := range []string{"--allowedTools", "Bash", "--permission-mode", "acceptEdits", "--output-format", "stream-json", "--json-schema", BuildSchema, "--max-turns", "150", "--no-chrome", "--strict-mcp-config"} {
+		for _, want := range []string{"--allowedTools", "Bash", "--permission-mode", "acceptEdits", "--output-format", "stream-json", "--json-schema", buildSchema, "--max-turns", "150", "--no-chrome", "--strict-mcp-config"} {
 			if !slices.Contains(rest, want) {
 				t.Fatalf("round %d lost %q: %q", n, want, argv)
 			}

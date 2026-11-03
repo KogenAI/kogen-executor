@@ -268,14 +268,13 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 	if !executor.IsRole(t.Role) {
 		return nil, executor.Fail(executor.ReasonUnavailable, "Claude Code does not serve the "+quoteBound(t.Role)+" role")
 	}
-	schema := BuildSchema
-	if t.Role != executor.RoleBuild {
-		var obj map[string]any
-		if json.Unmarshal(t.Schema, &obj) != nil || obj == nil {
-			return nil, executor.Fail(executor.ReasonUnavailable, "the "+t.Role+" role needs a JSON object schema for its structured submission")
-		}
-		schema = string(t.Schema)
+	// The structured submission is the phase's own: its schema comes with the task, for every
+	// role, and is passed on byte for byte.
+	var obj map[string]any
+	if json.Unmarshal(t.Schema, &obj) != nil || obj == nil {
+		return nil, executor.Fail(executor.ReasonUnavailable, "the "+t.Role+" role needs a JSON object schema for its structured submission")
 	}
+	schema := string(t.Schema)
 	if len(a.opts.HookCommand) == 0 || a.opts.HookCommand[0] == "" {
 		return nil, executor.Fail(executor.ReasonUnavailable, "the Claude Code adapter has no hook command, so protected-path prevention cannot be installed")
 	}

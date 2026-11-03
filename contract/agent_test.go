@@ -41,7 +41,7 @@ func TestAgentToolNames(t *testing.T) {
 }
 
 // TestAgentPrompts pins the shared prompt material and the template mechanism: the testing
-// rules (kogen cli/testing_rules_test.go, kogen-build builder.go and material.go, kogen-shaping
+// rules (kogen cli/testing_rules_test.go, kogen-build builder.go, kogen-review material.go, kogen-shaping
 // refine.go and context.go) and agent.Render, with which a phase renders its own prompt
 // templates (kogen-shaping shape/policy.go).
 func TestAgentPrompts(t *testing.T) {

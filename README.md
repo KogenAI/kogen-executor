@@ -7,12 +7,12 @@ It is a component of [Kogen](https://github.com/KogenAI/kogen), which pins an ex
 ## Packages
 
 - `executor`: the external executor contract.
-- `executor/claudecode`: the Claude Code adapter (pinned runtime, hooks, sessions, streaming).
+- `executor/claudecode`: the Claude Code adapter (pinned runtime, hooks, sessions, streaming). Every role's structured submission schema is its phase's own and comes with the task (`executor.Task.Schema`); the adapter passes it on as `--json-schema` and reads only the executor contract's blocker claim from a Build's result.
 - `executor/conformance`: the scripted conformance checks for executors.
 - `agent`: what the phases share for their model conversations: the generic tool definitions (from kogen-loop), the template mechanism a phase renders its own prompts with, the shared testing rules, and the request budgets. Each phase owns its own prompt and submission tools: kogen-shaping (Shape, Refine), kogen-setup (Init), kogen-build (the builder) and kogen-review (the reviewer).
 - `thinking`: removal of stale thinking blocks from kept provider messages.
 - `testproc`: process isolation for tests with process-wide state.
-- `core`: what kogen-build and kogen-review share: token totals, the review record, an external executor's state and usage, the review material and the small encodings both write. The persisted Build state and the run record are kogen-build's; the review's contract is kogen-review's.
+- `core`: what kogen-build and kogen-review share: token totals, the review record, an external executor's state and usage and the small encodings both write. The persisted Build state and the run record are kogen-build's; the review's contract and its material are kogen-review's.
 
 ## Claude Code configuration
 

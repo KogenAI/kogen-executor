@@ -25,9 +25,6 @@ const Constraints = "You are implementing one requested feature in this Git chec
 // within the round instead.
 const wakeupTool = "ScheduleWakeup"
 
-// BuildSchema is the --json-schema of the Build role: an optional summary and an optional blocker.
-const BuildSchema = `{"type":"object","properties":{"summary":{"type":"string"},"blocker":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"reason":{"type":"string"},"evidence":{"type":"string"}},"required":["paths","reason","evidence"],"additionalProperties":false}},"additionalProperties":false}`
-
 // ShapeConstraints and ReviewConstraints frame the other two roles the same way: the entire
 // framing besides the task itself, round 1's preface and the --append-system-prompt text.
 const ShapeConstraints = "You are shaping one requested feature in this Git checkout, the current directory: you inspect it and propose the Intent files.\n" +
@@ -152,10 +149,11 @@ func roundArgs(o Options, sessionID string, n int, model, effort, settingsPath s
 	return args
 }
 
-// roleRoundArgs is roundArgs for a role. Every role requests schema-constrained output; Shape and Review frame the
-// task with their own constraints and request schema-constrained output (--json-schema) on every
-// invocation, the first with --session-id (never --resume, --continue or --fork-session) and
-// later feedback rounds of the same role session with --resume.
+// roleRoundArgs is roundArgs for a role. Every role requests schema-constrained output
+// (--json-schema) with the schema its phase handed over in the task (executor.Task.Schema) on
+// every invocation, the first with --session-id (never --resume, --continue or --fork-session)
+// and later feedback rounds of the same role session with --resume; Shape and Review frame the
+// task with their own constraints.
 func roleRoundArgs(o Options, role, schema, sessionID string, n int, model, effort, settingsPath string, maxTurns int) []string {
 	args := roundArgs(o, sessionID, n, model, effort, settingsPath, maxTurns)
 	if role == "" || role == "build" {

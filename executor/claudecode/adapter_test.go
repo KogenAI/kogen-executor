@@ -34,6 +34,10 @@ func oneRound(r conformance.RoundScript) conformance.Script {
 
 var finishRound = conformance.RoundScript{End: "finish", Claim: "done", Usage: &conformance.ScriptUsage{Input: 120, Cached: 20, Output: 30}}
 
+// buildSchema is the schema the harness's Build task hands the adapter, as a Build phase hands its
+// own (kogen-build's build.SubmissionSchema): the adapter passes it on unchanged.
+const buildSchema = `{"type":"object","properties":{"summary":{"type":"string"},"blocker":{"type":"object"}},"additionalProperties":false}`
+
 func newHarness(t *testing.T, cfg fakeConfig) *harness {
 	t.Helper()
 	root := conformance.NewCheckout(t)
@@ -42,7 +46,7 @@ func newHarness(t *testing.T, cfg fakeConfig) *harness {
 		Role: executor.RoleBuild, Root: root, Protected: []string{conformance.ProtectedPath},
 		Model: "claude-sonnet-5-5", Effort: "high", RunID: "run-1", MaxRounds: 6,
 		Brief: executor.Brief{Stable: "STABLE brief", Dynamic: "DYNAMIC files"},
-		Home:  t.TempDir(), Dir: filepath.Join(t.TempDir(), "executor"),
+		Home:  t.TempDir(), Dir: filepath.Join(t.TempDir(), "executor"), Schema: json.RawMessage(buildSchema),
 	}
 	return h
 }
@@ -301,8 +305,8 @@ func TestArgvRounds(t *testing.T) {
 			"--no-chrome", "--max-turns", "150",
 		}
 	}
-	round1 := append(common("--session-id"), "--append-system-prompt", Constraints, "--disallowedTools", "ScheduleWakeup", "--json-schema", BuildSchema)
-	round2 := append(common("--resume"), "--disallowedTools", "ScheduleWakeup", "--json-schema", BuildSchema)
+	round1 := append(common("--session-id"), "--append-system-prompt", Constraints, "--disallowedTools", "ScheduleWakeup", "--json-schema", buildSchema)
+	round2 := append(common("--resume"), "--disallowedTools", "ScheduleWakeup", "--json-schema", buildSchema)
 	if got := h.f.argv(1); !reflect.DeepEqual(got, round1) {
 		t.Fatalf("round 1 argv\n got %q\nwant %q", got, round1)
 	}

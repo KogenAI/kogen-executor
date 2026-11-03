@@ -139,8 +139,11 @@ type Task struct {
 	RunID     string    `json:"run_id"`
 	Deadline  time.Time `json:"deadline"` // zero: none
 	MaxRounds int       `json:"max_rounds"`
-	// Schema is the JSON Schema of the structured submission (Shape and Review): the
-	// executor requests schema-constrained output and returns the final result's object.
+	// Schema is the JSON Schema of the role's structured submission, owned by the phase that
+	// hands over the task (Shape, Build and Review alike): an executor that requests
+	// schema-constrained output passes it on unchanged. A Shape or Review round returns the final
+	// result's object; a Build round's object carries only its optional blocker claim (blocker:
+	// paths, reason, evidence).
 	Schema json.RawMessage `json:"schema,omitempty"`
 	// Home is the user's HOME for locating the harness's own sign-in; it is never read for
 	// secrets by Kogen.

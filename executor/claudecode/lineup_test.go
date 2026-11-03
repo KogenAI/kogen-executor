@@ -90,9 +90,9 @@ func TestClaudeLineupRoleProtocol(t *testing.T) {
 	})
 
 	t.Run("structured roles need a schema", func(t *testing.T) {
-		for _, role := range []string{executor.RoleShape, executor.RoleReview} {
+		for _, role := range []string{executor.RoleShape, executor.RoleBuild, executor.RoleReview} {
 			h := newHarness(t, fakeConfig{})
-			h.task.Role = role
+			h.task.Role, h.task.Schema = role, nil
 			_, err := h.start(h.f.options())
 			wantError(t, err, "executor/unavailable")
 			h.task.Schema = json.RawMessage(`[1]`)
@@ -189,7 +189,7 @@ func TestClaudeLineupRoleProtocol(t *testing.T) {
 		h := roleHarness(t, executor.RoleBuild, fakeConfig{Script: oneRound(finishRound)})
 		res, err := h.startOK().Round(context.Background(), executor.Input{})
 		if err != nil || res.Ending != executor.EndFinish || res.Claim != "done" || len(res.Structured) != 0 || res.Blocker != nil ||
-			argAfter(h.f.argv(1), "--json-schema") != BuildSchema {
+			argAfter(h.f.argv(1), "--json-schema") != buildSchema {
 			t.Fatalf("%v %+v %v", err, res, h.f.argv(1))
 		}
 		if argAfter(h.f.argv(1), "--append-system-prompt") != Constraints {
