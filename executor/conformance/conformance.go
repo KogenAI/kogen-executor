@@ -361,6 +361,11 @@ func checkNoChild(t *testing.T, root string) {
 		if syscall.Kill(pid, 0) != nil {
 			return
 		}
+		// A defunct child is no longer running; reaping an orphan is init's job.
+		status, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+		if err == nil && strings.HasPrefix(strings.TrimSpace(string(status)), "Z") {
+			return
+		}
 		if time.Now().After(deadline) {
 			syscall.Kill(pid, syscall.SIGKILL)
 			t.Fatalf("background child %d outlived the round", pid)

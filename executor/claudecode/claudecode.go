@@ -239,7 +239,11 @@ func startWithToken(cmd *exec.Cmd, token string, start func() error) error {
 		return executor.Fail(executor.ReasonFailed, "cannot create a pipe: "+err.Error())
 	}
 	defer r.Close()
-	cmd.ExtraFiles = []*os.File{r}
+	if len(cmd.ExtraFiles) == 0 {
+		cmd.ExtraFiles = []*os.File{r}
+	} else {
+		cmd.ExtraFiles[0] = r
+	}
 	return start()
 }
 

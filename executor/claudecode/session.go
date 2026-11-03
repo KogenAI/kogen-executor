@@ -185,7 +185,8 @@ func (s *session) runRound(ctx context.Context, n int, prompt string) (executor.
 		return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "cannot create a pipe: "+err.Error())
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = sr, pw, stderr
-	if err := startWithToken(cmd, s.a.opts.Token, cmd.Start); err != nil {
+	retire, err := startCustodied(cmd, s.a.opts.Token)
+	if err != nil {
 		pw.Close()
 		sr.Close()
 		sw.Close()
@@ -213,6 +214,10 @@ func (s *session) runRound(ctx context.Context, n int, prompt string) (executor.
 		<-writerDone
 	}()
 	pgid := cmd.Process.Pid
+	defer func() {
+		syscall.Kill(-pgid, syscall.SIGKILL)
+		retire()
+	}()
 	s.live.Store(int64(pgid))
 	defer s.live.Store(0)
 	if s.closed.Load() {
