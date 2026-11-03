@@ -55,10 +55,24 @@ func Display(v any) string {
 	case json.Number:
 		return x.String()
 	case float64:
-		if x == float64(int64(x)) {
-			return strconv.FormatInt(int64(x), 10)
+		fixed := strconv.FormatFloat(x, 'f', -1, 64)
+		scientific := strconv.FormatFloat(x, 'e', -1, 64)
+		mantissa, exponent, ok := strings.Cut(scientific, "e")
+		if !ok { // Non-finite values have no decimal or exponent.
+			return fixed
 		}
-		return strconv.FormatFloat(x, 'g', -1, 64)
+		if !strings.Contains(fixed, ".") {
+			fixed += ".0"
+		}
+		if !strings.Contains(mantissa, ".") {
+			mantissa += ".0"
+		}
+		exp, _ := strconv.Atoi(exponent) // FormatFloat always emits a valid exponent.
+		scientific = mantissa + "e" + strconv.Itoa(exp)
+		if len(scientific) < len(fixed) {
+			return scientific
+		}
+		return fixed
 	}
 	return fmt.Sprint(v)
 }
