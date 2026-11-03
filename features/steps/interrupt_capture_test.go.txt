@@ -1,0 +1,74 @@
+package claudecode
+
+import (
+ "context"
+ "encoding/json"
+ "fmt"
+ "os"
+ "testing"
+ "time"
+
+ "github.com/KogenAI/kogen-executor/executor"
+ "kogen-loop/sys"
+)
+
+// Capture through the real Round entry point. No new production test seam.
+func TestInterruptAcceptanceCapture(t *testing.T) {
+ var rows []map[string]any
+ for _, name := range []string{"deadline", "term", "int", "cancel", "task_earlier", "context_earlier", "success"} {
+  h := newHarness(t, fakeConfig{Script: oneRound(finishRound)})
+  ctx, cancel := context.WithCancelCause(context.Background())
+  defer cancel(nil)
+  var effective time.Time
+  if name == "deadline" {
+   effective = time.Now().Add(-time.Hour)
+   var stop context.CancelFunc
+   ctx, stop = context.WithDeadline(ctx, effective)
+   defer stop()
+  }
+  if name == "task_earlier" || name == "context_earlier" {
+   early := time.Now().Add(time.Hour)
+   late := early.Add(time.Hour)
+   parentDeadline := late
+   h.task.Deadline = early
+   effective = early
+   if name == "context_earlier" { parentDeadline = early; h.task.Deadline = late }
+   var stop context.CancelFunc
+   ctx, stop = context.WithDeadline(ctx, parentDeadline)
+   defer stop()
+  }
+  var events []map[string]any
+  var lower int64
+  signal := &sys.Interrupted{Signal: "SIGTERM"}
+  if name == "int" { signal.Signal = "SIGINT" }
+  s, err := New(h.f.options()).Start(context.Background(), h.task, func(e map[string]any) {
+   events = append(events, e)
+   if e["event"] != "executor_round_started" { return }
+   if !effective.IsZero() { lower = max(int64(0), time.Until(effective).Milliseconds()) }
+   // Deliberately advance beyond the start bracket, not a bound on round duration.
+   // This rejects taking the snapshot at round end, even under the race detector.
+   if name == "task_earlier" || name == "context_earlier" {
+    for time.Until(effective).Milliseconds() >= lower-10 { time.Sleep(15*time.Millisecond) }
+   }
+   switch name {
+   case "term", "int": cancel(signal)
+   case "cancel", "task_earlier", "context_earlier": cancel(nil)
+   }
+  })
+  if err != nil { t.Fatal(err) }
+  upper := int64(0)
+  if !effective.IsZero() { upper = max(int64(0), time.Until(effective).Milliseconds()) }
+  _, err = s.Round(ctx, executor.Input{})
+  s.Close()
+  terminals := []map[string]any{}
+  for _, e := range events {
+   if e["event"] == "executor_round_failed" || e["event"] == "executor_round_ended" { terminals = append(terminals, e) }
+  }
+  code := 0
+  if e, ok := err.(interface{ ExitCode() int }); ok { code = e.ExitCode() } else if e, ok := sys.AsError(err); ok { code = e.Exit } else if err != nil { code = -1 }
+  rows = append(rows, map[string]any{"name": name, "events": terminals, "lower": lower, "upper": upper, "code": code, "same_signal": err == signal})
+ }
+ b, err := json.Marshal(rows)
+ if err != nil { t.Fatal(err) }
+ fmt.Fprintln(os.Stdout, "INTERRUPT_CAPTURE="+string(b))
+}

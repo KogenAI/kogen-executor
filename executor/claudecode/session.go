@@ -95,8 +95,12 @@ func (s *session) Round(ctx context.Context, in executor.Input) (executor.RoundR
 		ctx, cancel = context.WithDeadline(ctx, s.task.Deadline)
 		defer cancel()
 	}
+	var remaining any
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining = max(int64(0), time.Until(deadline).Milliseconds())
+	}
 	s.emit(map[string]any{"event": "executor_round_started", "role": s.role, "round": n, "session_id": s.sessionID, "resume": n > 1})
-	rr := &roundRun{s: s, n: n}
+	rr := &roundRun{s: s, n: n, deadlineRemaining: remaining}
 	res, err := s.runRound(ctx, n, prompt, rr)
 	if err != nil {
 		s.failed = true
@@ -104,12 +108,41 @@ func (s *session) Round(ctx context.Context, in executor.Input) (executor.RoundR
 		if e, ok := sys.AsError(err); ok {
 			reason, detail = e.Reason, e.Detail
 		}
-		event := map[string]any{"event": "executor_round_failed", "role": s.role, "round": n, "reason": reason, "detail": bound(detail, 400)}
+		event := map[string]any{"event": "executor_round_failed", "role": s.role, "round": n, "reason": reason, "detail": bound(detail, 400), "deadline_remaining_ms": remaining}
+		if rr.interrupted {
+			addInterruptCause(event, ctx)
+		}
 		rr.addRateLimit(event)
 		s.emit(event)
 		return executor.RoundResult{}, err
 	}
 	return res, nil
+}
+
+// addInterruptCause observes the context that stopped the round without changing its error.
+func addInterruptCause(event map[string]any, ctx context.Context) {
+	var interrupted *sys.Interrupted
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		event["interrupt_cause"] = "deadline"
+	case errors.As(context.Cause(ctx), &interrupted):
+		event["interrupt_cause"] = "signal"
+		switch interrupted.Signal {
+		case "SIGINT":
+			event["signal"] = int(syscall.SIGINT)
+		case "SIGTERM":
+			event["signal"] = int(syscall.SIGTERM)
+		case "SIGHUP":
+			event["signal"] = int(syscall.SIGHUP)
+		}
+	default:
+		event["interrupt_cause"] = "cancelled"
+	}
+}
+
+func (r *roundRun) classifyContext(ctx context.Context) error {
+	r.interrupted = true
+	return classify(ctx)
 }
 
 // prompt is round 1's preface and task, or a later round's feedback.
@@ -136,7 +169,7 @@ func (a *adapter) FirstPromptBytes(role string, brief executor.Brief) int {
 
 func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundRun) (executor.RoundResult, error) {
 	if ctx.Err() != nil {
-		return executor.RoundResult{}, classify(ctx)
+		return executor.RoundResult{}, rr.classifyContext(ctx)
 	}
 	rawPath := filepath.Join(s.dir, "round-"+strconv.Itoa(n)+".jsonl")
 	errPath := filepath.Join(s.dir, "round-"+strconv.Itoa(n)+".stderr")
@@ -275,7 +308,7 @@ loop:
 		select {
 		case <-ctx.Done():
 			terminateGroup(pgid, exited, s.a.opts.KillGrace)
-			return executor.RoundResult{}, classify(ctx)
+			return executor.RoundResult{}, rr.classifyContext(ctx)
 		case err := <-werrCh:
 			werrCh = nil
 			// A closed pipe means Claude Code stopped reading or died: its stream, exit status
@@ -322,7 +355,7 @@ loop:
 	case <-exited:
 	case <-ctx.Done():
 		terminateGroup(pgid, exited, s.a.opts.KillGrace)
-		return executor.RoundResult{}, classify(ctx)
+		return executor.RoundResult{}, rr.classifyContext(ctx)
 	case <-time.After(s.a.opts.KillGrace):
 		killed = true
 		terminateGroup(pgid, exited, s.a.opts.KillGrace)
@@ -336,7 +369,7 @@ loop:
 		return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "Claude Code did not exit")
 	}
 	if ctx.Err() != nil {
-		return executor.RoundResult{}, classify(ctx)
+		return executor.RoundResult{}, rr.classifyContext(ctx)
 	}
 	exit := 0
 	var ee *exec.ExitError

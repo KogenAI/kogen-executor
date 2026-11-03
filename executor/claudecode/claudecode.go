@@ -487,7 +487,7 @@ func newUUID() (string, error) {
 }
 
 // classify is the executor error for a done context, by the context's state and never by an
-// exit code (SIGINT exits 0). A sys.Interrupted cause keeps its own exit code.
+// exit code. A sys.Interrupted cause keeps its own exit code.
 func classify(ctx context.Context) error {
 	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) && !errors.Is(cause, context.DeadlineExceeded) {
 		var te interface{ ExitCode() int }
