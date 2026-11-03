@@ -1325,3 +1325,47 @@ func TestRedactNoTokenIsIdentity(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestChildEnvRouteSelectors(t *testing.T) {
+	keys := []string{
+		"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
+		"ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_EXTRA_BODY", "ANTHROPIC_UNIX_SOCKET",
+		"ANTHROPIC_BEDROCK_BASE_URL", "ANTHROPIC_VERTEX_BASE_URL", "ANTHROPIC_VERTEX_PROJECT_ID",
+		"ANTHROPIC_FOUNDRY_BASE_URL", "ANTHROPIC_FOUNDRY_RESOURCE",
+		"CLAUDE_CODE_SKIP_BEDROCK_AUTH", "CLAUDE_CODE_SKIP_VERTEX_AUTH", "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+	}
+	base := []string{"HTTPS_PROXY=proxy", "NO_PROXY=local", "AWS_REGION=region", "PATH=/bin", "CLAUDE_CONFIG_DIR=old", "CLAUDE_CONFIG_DIR=older", "HOME=old", "HOME=older", "DISABLE_UPDATES=0", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=0", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=0"}
+	for _, key := range keys {
+		base = append(base, key+"=inherited")
+	}
+	got := childEnv(base, "/h", "", "/cfg")
+	want := []string{"HTTPS_PROXY=proxy", "NO_PROXY=local", "AWS_REGION=region", "PATH=/bin", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "DISABLE_UPDATES=1", "CLAUDE_CONFIG_DIR=/cfg", "HOME=/h"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("child environment = %v, want %v", got, want)
+	}
+}
+
+func TestRoundDoesNotInheritModelOrHeaders(t *testing.T) {
+	h := newHarness(t, fakeConfig{Script: oneRound(finishRound)})
+	h.task.Model = ""
+	s, err := h.start(h.f.options("ANTHROPIC_MODEL=x", "ANTHROPIC_CUSTOM_HEADERS=h"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Round(context.Background(), executor.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range h.f.argv(1) {
+		if arg == "--model" {
+			t.Error("unexpected --model flag")
+		}
+	}
+	for _, kv := range h.f.env(1) {
+		key, _, _ := strings.Cut(kv, "=")
+		if key == "ANTHROPIC_MODEL" || key == "ANTHROPIC_CUSTOM_HEADERS" {
+			t.Errorf("%s reached the round", key)
+		}
+	}
+}
