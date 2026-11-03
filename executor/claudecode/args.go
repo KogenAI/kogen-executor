@@ -20,7 +20,7 @@ const Constraints = "You are implementing one requested feature in this Git chec
 	"Scheduled wakeups are unavailable; await commands and their completion within the current round.\n" +
 	"When you believe the work is complete, stop and summarize what you changed."
 
-// wakeupTool is the Claude Code tool a Build session may not use: a scheduled wakeup would continue
+// wakeupTool is the Claude Code tool no role may use: a scheduled wakeup would continue
 // the work after the round's result, which the strict stream protocol refuses. Commands are awaited
 // within the round instead.
 const wakeupTool = "ScheduleWakeup"
@@ -30,12 +30,14 @@ const wakeupTool = "ScheduleWakeup"
 const ShapeConstraints = "You are shaping one requested feature in this Git checkout, the current directory: you inspect it and propose the Intent files.\n" +
 	"Kogen validates, checks and publishes your proposal; you cannot approve it, build it or commit it.\n" +
 	"This checkout is read-only for you. Do not edit, create or delete any file, do not touch the Git index, and do not commit, push, switch branches, stash or rewrite Git state, including the files you propose: submit them instead.\n" +
+	"Scheduled wakeups are unavailable; await commands and their completion within the current round.\n" +
 	"Finish with the structured submission the schema requires, as your final result."
 
 const ReviewConstraints = "You are the independent reviewer of one candidate in this Git checkout, the current directory. " +
 	"Kogen will independently run the configured checks and the single commit.\n" +
 	"You may repair concrete defects within the approved Intent. Do not commit, push, switch branches, stash or rewrite Git state.\n" +
 	"Do not edit the protected paths named in the task: edits to them are refused, and any change to them is detected and stops the Build.\n" +
+	"Scheduled wakeups are unavailable; await commands and their completion within the current round.\n" +
 	"Finish with the structured review verdict the schema requires, as your final result."
 
 // constraintsFor is the framing of a role.
@@ -176,11 +178,13 @@ func roleRoundArgs(o Options, role, schema, sessionID string, n int, model, effo
 	if role == "shape" {
 		for i, a := range args {
 			if a == "--allowedTools" && i+1 < len(args) {
-				extra := []string{"--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit"}
+				extra := []string{"--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit," + wakeupTool}
 				args = append(args[:i+2], append(extra, args[i+2:]...)...)
 				break
 			}
 		}
+	} else if role == "review" {
+		args = append(args, "--disallowedTools", wakeupTool)
 	}
 	return append(args, "--json-schema", schema)
 }

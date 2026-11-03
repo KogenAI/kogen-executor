@@ -105,14 +105,71 @@ func TestBuildWakeupDeniedEveryRound(t *testing.T) {
 			t.Fatalf("round %d attempted=%v refused=%v", n, attempted, refused)
 		}
 	}
-	// Shape keeps its own read-only denials and gets no Build wiring.
+	// Shape retains its read-only denials alongside the wakeup denial.
 	sh := roleHarness(t, executor.RoleShape, fakeConfig{Script: oneRound(structuredRound(`{"files":[]}`))})
 	ss := sh.startOK()
 	if _, err := ss.Round(context.Background(), executor.Input{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := argAfter(sh.f.argv(1), "--disallowedTools"); got != "Edit,Write,MultiEdit,NotebookEdit" {
+	if got := argAfter(sh.f.argv(1), "--disallowedTools"); got != "Edit,Write,MultiEdit,NotebookEdit,ScheduleWakeup" {
 		t.Fatalf("shape denies %q", got)
+	}
+}
+
+func TestNonbuildWakeupDeniedEveryRound(t *testing.T) {
+	t.Parallel()
+	const sentence = "Scheduled wakeups are unavailable; await commands and their completion within the current round."
+	for _, tc := range []struct{ role, denied string }{
+		{executor.RoleShape, "Edit,Write,MultiEdit,NotebookEdit,ScheduleWakeup"},
+		{executor.RoleReview, "ScheduleWakeup"},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			r := structuredRound(`{"verdict":"approve"}`)
+			h := roleHarness(t, tc.role, fakeConfig{WakeupAttempt: true, Script: conformance.Script{Rounds: []conformance.RoundScript{r, r}}})
+			s := h.startOK()
+			defer s.Close()
+			for i, in := range []executor.Input{{}, {Feedback: "continue"}} {
+				n := i + 1
+				res, err := s.Round(context.Background(), in)
+				if err != nil || res.Ending != executor.EndFinish {
+					t.Fatalf("round %d: result %+v error %v", n, res, err)
+				}
+				argv := h.f.argv(n)
+				if got := argAfter(argv, "--disallowedTools"); got != tc.denied {
+					t.Fatalf("round %d denied %q", n, got)
+				}
+				if n == 1 {
+					frame := constraintsFor(tc.role)
+					if !strings.Contains(frame, sentence) || argAfter(argv, "--append-system-prompt") != frame || !strings.HasPrefix(string(h.f.prompt(1)), frame+"\n\n") {
+						t.Fatal("wakeup framing not delivered")
+					}
+				}
+				events := streamLines(t, h, string(rune('0'+n)))
+				attempted, refused, results := false, false, 0
+				for j, ev := range events {
+					msg, _ := ev["message"].(map[string]any)
+					blocks, _ := msg["content"].([]any)
+					for _, b := range blocks {
+						m, _ := b.(map[string]any)
+						if m["type"] == "tool_use" && m["name"] == "ScheduleWakeup" {
+							attempted = true
+						}
+					}
+					if c, isErr, ok := toolResult(ev, "toolu_wakeup"); ok {
+						refused = attempted && isErr && strings.Contains(c, "unavailable")
+					}
+					if ev["type"] == "result" {
+						results++
+						if !refused || j != len(events)-1 {
+							t.Fatalf("round %d result before refusal or followed by events: %v", n, events)
+						}
+					}
+				}
+				if !attempted || !refused || results != 1 {
+					t.Fatalf("round %d attempted=%v refused=%v results=%d", n, attempted, refused, results)
+				}
+			}
+		})
 	}
 }
 
