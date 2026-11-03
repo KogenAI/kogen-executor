@@ -100,7 +100,7 @@ func (s *session) Round(ctx context.Context, in executor.Input) (executor.RoundR
 		remaining = max(int64(0), time.Until(deadline).Milliseconds())
 	}
 	s.emit(map[string]any{"event": "executor_round_started", "role": s.role, "round": n, "session_id": s.sessionID, "resume": n > 1})
-	rr := &roundRun{s: s, n: n, deadlineRemaining: remaining}
+	rr := &roundRun{s: s, n: n, deadlineRemaining: remaining, started: time.Now()}
 	res, err := s.runRound(ctx, n, prompt, rr)
 	if err != nil {
 		s.failed = true
@@ -113,6 +113,7 @@ func (s *session) Round(ctx context.Context, in executor.Input) (executor.RoundR
 			addInterruptCause(event, ctx)
 		}
 		rr.addRateLimit(event)
+		rr.addProfile(event)
 		s.emit(event)
 		return executor.RoundResult{}, err
 	}
@@ -228,6 +229,7 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 		sw.Close()
 		return executor.RoundResult{}, executor.Fail(executor.ReasonUnavailable, "cannot start Claude Code: "+bound(err.Error(), 200))
 	}
+	rr.procStarted = time.Now()
 	pw.Close()
 	sr.Close()
 	if errw != nil {
@@ -323,6 +325,7 @@ loop:
 			if m.err != nil && m.err != io.EOF {
 				return fail(executor.Fail(executor.ReasonProtocol, "cannot read the event stream: "+bound(m.err.Error(), 100)))
 			}
+			rr.receive(time.Now())
 			// Whole lines are redacted before they are persisted or parsed, so the token is
 			// caught however the pipe chunked it and never reaches events or the claim.
 			line := []byte(s.a.redact(string(m.line)))

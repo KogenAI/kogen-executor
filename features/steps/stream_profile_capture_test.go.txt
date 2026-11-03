@@ -1,0 +1,126 @@
+package streamprofile_test
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-executor/executor/claudecode"
+	"github.com/KogenAI/kogen-executor/executor/conformance"
+	"kogen-loop/sys"
+)
+
+// profileRound is one scripted round: Stream items are a number (sleep that many seconds),
+// the string "init" (a valid system/init line) or an object (that line, @SID@ = session id).
+type profileRound struct {
+	Name   string            `json:"name"`
+	Stream []json.RawMessage `json:"stream"`
+	Exit   int               `json:"exit"`
+}
+
+func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// TestStreamProfileCapture runs each round through the real Start/Round API against a fake
+// claude shell script with real sleeps, and prints the terminal events and outcomes.
+func TestStreamProfileCapture(t *testing.T) {
+	var rounds []profileRound
+	if err := json.Unmarshal([]byte(os.Getenv("STREAM_PROFILE_ROUNDS")), &rounds); err != nil {
+		t.Fatalf("STREAM_PROFILE_ROUNDS: %v", err)
+	}
+	var rows []map[string]any
+	for _, pr := range rounds {
+		home, state := t.TempDir(), t.TempDir()
+		checkout := conformance.NewCheckout(t)
+		var body strings.Builder
+		for i, item := range pr.Stream {
+			var v any
+			if err := json.Unmarshal(item, &v); err != nil {
+				t.Fatalf("%s item %d: %v", pr.Name, i, err)
+			}
+			switch x := v.(type) {
+			case float64:
+				body.WriteString("sleep " + strconv.FormatFloat(x, 'f', -1, 64) + "\n")
+				continue
+			case string:
+				if x != "init" {
+					t.Fatalf("%s item %d: unknown string %q", pr.Name, i, x)
+				}
+				v = map[string]any{"type": "system", "subtype": "init", "cwd": checkout, "session_id": "@SID@", "mcp_servers": []any{},
+					"permissionMode": "acceptEdits", "apiKeySource": "none", "claude_code_version": "2.1.312", "model": "claude-sonnet-5-5"}
+			}
+			b, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(state, "line-"+strconv.Itoa(i)+".json")
+			if err := os.WriteFile(file, append(b, '\n'), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			body.WriteString(`sed "s/@SID@/$sid/g" ` + shQuote(file) + "\n")
+		}
+		script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "2.1.312 (Claude Code)"
+  exit 0
+fi
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  echo '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"max"}'
+  exit 0
+fi
+cat > /dev/null
+sid=
+prev=
+for a in "$@"; do
+  case "$prev" in
+    --session-id|--resume) sid=$a ;;
+  esac
+  prev=$a
+done
+` + body.String() + "exit " + strconv.Itoa(pr.Exit) + "\n"
+		bin := claudecode.RuntimePath(home)
+		if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var events []map[string]any
+		task := executor.Task{
+			Role: executor.RoleBuild, Root: checkout, Protected: []string{conformance.ProtectedPath},
+			Brief: executor.Brief{Stable: "STABLE authority\n", Dynamic: "dynamic evidence"},
+			Model: "claude-sonnet-5-5", Home: home, Dir: filepath.Join(t.TempDir(), "executor"), RunID: "run-1",
+		}
+		s, err := claudecode.New(claudecode.Options{Home: home, HookCommand: []string{"/bin/true"}}).Start(t.Context(), task, func(e map[string]any) { events = append(events, e) })
+		if err != nil {
+			t.Fatalf("%s: Start: %v", pr.Name, err)
+		}
+		res, err := s.Round(t.Context(), executor.Input{})
+		s.Close()
+		row := map[string]any{"name": pr.Name, "ending": string(res.Ending), "claim": res.Claim, "reason": "", "detail": ""}
+		if err != nil {
+			e, ok := sys.AsError(err)
+			if !ok {
+				t.Fatalf("%s: untyped round error: %v", pr.Name, err)
+			}
+			row["reason"], row["detail"] = e.Reason, e.Detail
+		}
+		terminals := []map[string]any{}
+		for _, e := range events {
+			if e["event"] == "executor_round_ended" || e["event"] == "executor_round_failed" {
+				terminals = append(terminals, e)
+			}
+		}
+		row["events"] = terminals
+		rows = append(rows, row)
+	}
+	b, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("STREAM_PROFILE_CAPTURE=" + string(b))
+}

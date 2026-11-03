@@ -45,6 +45,66 @@ type roundRun struct {
 	rateLimitCount int
 	rateLimitInfo  map[string]any
 	pending        map[string]bool
+
+	// Round profile: observation only, reported in the terminal event.
+	started     time.Time // the round's run state was created
+	procStarted time.Time // the Claude Code process was started
+	received    time.Time // receipt of the line being handled
+	lastLine    time.Time // receipt of the previous line, zero before the first
+	maxGap      time.Duration
+	initAfter   time.Duration // process start to the accepted init line
+	initSeen    bool
+	ignored     map[string]int // ignored type/subtype key -> count
+}
+
+const (
+	maxIgnoredKeys     = 16
+	maxIgnoredKeyBytes = 64
+)
+
+// receive notes the receipt of one stdout line, before it is redacted or parsed.
+func (r *roundRun) receive(now time.Time) {
+	r.received = now
+	if !r.lastLine.IsZero() {
+		r.maxGap = max(r.maxGap, now.Sub(r.lastLine))
+	}
+	r.lastLine = now
+}
+
+// ignore counts a line the dispatch accepted without interpreting it.
+func (r *roundRun) ignore(typ, sub string) {
+	key := typ
+	if sub != "" {
+		key += "/" + sub
+	}
+	if len(key) > maxIgnoredKeyBytes {
+		cut := maxIgnoredKeyBytes
+		for cut > 0 && !isRuneStart(key[cut]) {
+			cut--
+		}
+		key = key[:cut]
+	}
+	if _, ok := r.ignored[key]; !ok {
+		if len(r.ignored) >= maxIgnoredKeys {
+			return
+		}
+		if r.ignored == nil {
+			r.ignored = map[string]int{}
+		}
+	}
+	r.ignored[key]++
+}
+
+// addProfile adds the round's profile fields to a terminal event.
+func (r *roundRun) addProfile(event map[string]any) {
+	event["wall_ms"] = time.Since(r.started).Milliseconds()
+	if r.initSeen {
+		event["init_ms"] = r.initAfter.Milliseconds()
+	}
+	event["max_line_gap_ms"] = r.maxGap.Milliseconds()
+	if len(r.ignored) != 0 {
+		event["ignored_events"] = r.ignored
+	}
 }
 
 // line handles one stream-json line: malformed JSON, a failed gate or a broken hook protocol
@@ -71,8 +131,12 @@ func (r *roundRun) line(b []byte) error {
 	}
 	switch typ {
 	case "system":
-		if sub == "init" {
+		switch sub {
+		case "init":
 			return r.gate(ev)
+		case "hook_started", "hook_response", "plugin_install":
+		default:
+			r.ignore(typ, sub)
 		}
 	case "assistant":
 		if e, _ := ev["error"].(string); e == "authentication_failed" {
@@ -99,6 +163,8 @@ func (r *roundRun) line(b []byte) error {
 		}
 	case "result":
 		r.result = ev
+	default:
+		r.ignore(typ, sub)
 	}
 	return nil
 }
@@ -144,6 +210,9 @@ func (r *roundRun) gate(ev map[string]any) error {
 		return executor.Fail(executor.ReasonProtocol, "Claude Code runs in "+quoteBound(cwd)+", not the checkout")
 	}
 	r.init = true
+	if !r.procStarted.IsZero() {
+		r.initSeen, r.initAfter = true, r.received.Sub(r.procStarted)
+	}
 	r.model, _ = ev["model"].(string)
 	r.ccVersion, _ = ev["claude_code_version"].(string)
 	if r.ccVersion == "" {
@@ -421,6 +490,7 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 		"terminal_reason": terminal, "deadline_remaining_ms": r.deadlineRemaining,
 	}
 	r.addRateLimit(event)
+	r.addProfile(event)
 	s.emit(event)
 	return out, nil
 }
