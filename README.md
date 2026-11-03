@@ -37,6 +37,14 @@ Use it only after an intended change to the prompts or to the Kogen-owned tool d
 
 Review the diff of the regenerated golden: a change to `prompts_golden.json` must be deliberate, because it records the prompt bytes Kogen's models have always received. Then run the full checks again without the flag.
 
+### Contract suite
+
+`contract/` pins the API, behaviours and file and wire formats that kogen, kogen-shaping and kogen-build use from this module. Its cases are copied from their tests and run on synthetic fixtures only: a fake `claude`, temporary checkouts, no model runs and no network.
+
+It runs in the ordinary `go test ./...`, and `go test ./contract/...` runs it alone.
+
+An intended interface change edits `contract/` in the same change, together with its paired consumer items in those repositories: the consumer tests named in the assertion messages. A contract failure that is not an intended change is a break to fix in kogen-executor.
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
