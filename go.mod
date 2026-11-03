@@ -4,6 +4,7 @@ go 1.27.2
 
 require (
 	github.com/KogenAI/kogen-coordinator v0.0.0-20261102193107-c4a49a4fe84f
+	github.com/KogenAI/kogen-verification v0.0.0-20261103020618-01aa16c01767
 	kogen-loop v0.0.0
 )
 
