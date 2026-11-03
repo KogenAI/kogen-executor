@@ -30,15 +30,18 @@ func secretNamed(name string) bool {
 	return false
 }
 
-const argValue = `'[^']*'|"[^"]*"|[^\s'"` + "`" + `;&|()<>]+`
+const argValue = `\$'(?:\\.|[^'\\])*'|\\"(?:\\.|[^"\\])*\\"|\\'(?:\\.|[^'\\])*\\'|'[^']*'|"[^"]*"|[^\s'"` + "`" + `;&|()<>]+`
 
 var (
+	reHeader      = regexp.MustCompile(`(?i)(?:^|\s)(?:-H|--header)\s+(?:"[A-Za-z0-9_-]+:[^"\r\n]*"|'[A-Za-z0-9_-]+:[^'\r\n]*')`)
+	rePair        = regexp.MustCompile(`(?i)(["']?[A-Za-z0-9_-]+["']?)(\s*:\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[redacted\][^\s,;}\]"']*|[^\s,;}\]"']+)`)
+	reBasicAuth   = regexp.MustCompile(`(^|\s)(?:-u|--user)\s+(?:"[^"\s:]+:(?:\\.|[^"\\])*"|'[^'\s:]+:[^']*'|[^\s:'"]+:[^\s'";&|()<>]+)`)
 	rePrivateKey  = regexp.MustCompile(`(?s)-----BEGIN[A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END[A-Z0-9 ]*PRIVATE KEY-----|\z)`)
 	reURLAuth     = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.\-]*://[^\s:/@]*:)[^\s/@]+(@)`)
 	reAuthHeader  = regexp.MustCompile(`(?i)(Authorization:\s*[A-Za-z]+\s+)[^\s'"]+`)
 	reTokens      = regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]+|\bgithub_pat_[A-Za-z0-9_]+|\bsk-[A-Za-z0-9_-]{20,}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bxox[abprs]-[A-Za-z0-9-]+`)
 	reAssignValue = regexp.MustCompile(`^(?:` + argValue + `)`)
-	reOption      = regexp.MustCompile(`(^|\s)(--?[A-Za-z0-9_][A-Za-z0-9_-]*)(\s+)(?:'[^']*'|"[^"]*"|[^\s'"` + "`" + `;&|()<>-][^\s'"` + "`" + `;&|()<>]*)`)
+	reOption      = regexp.MustCompile(`(^|\s)(--?[A-Za-z0-9_][A-Za-z0-9_-]*)(\s+)(?:` + argValue + `)`)
 )
 
 // secretEnvValues are the values of the secret-named NAME=VALUE entries of env that are long
@@ -65,11 +68,48 @@ func redactSecrets(s string, envValues []string) string {
 	}
 	s = rePrivateKey.ReplaceAllLiteralString(s, redactMark)
 	s = reURLAuth.ReplaceAllString(s, "${1}"+redactMark+"${2}")
+	s = replaceMatches(reHeader, s, func(s string, m []int) string {
+		match := s[m[0]:m[1]]
+		colon := strings.IndexByte(match, ':')
+		quote := strings.IndexAny(match, "\"'")
+		name := strings.ToUpper(match[quote+1 : colon])
+		if name != "COOKIE" && name != "SET-COOKIE" && !strings.Contains(name, "KEY") && !strings.Contains(name, "TOKEN") && !strings.Contains(name, "SECRET") && !strings.Contains(name, "AUTH") {
+			return match
+		}
+		start := colon + 1
+		for start < len(match)-1 && (match[start] == ' ' || match[start] == '\t') {
+			start++
+		}
+		return match[:start] + redactMark + match[len(match)-1:]
+	})
 	s = reAuthHeader.ReplaceAllString(s, "${1}"+redactMark)
+	s = replaceMatches(reBasicAuth, s, func(s string, m []int) string {
+		match := s[m[0]:m[1]]
+		colon := strings.IndexByte(match, ':')
+		suffix := ""
+		if match[len(match)-1] == '\'' || match[len(match)-1] == '"' {
+			suffix = match[len(match)-1:]
+		}
+		return match[:colon+1] + redactMark + suffix
+	})
+	s = replaceMatches(rePair, s, func(s string, m []int) string {
+		name := strings.Trim(s[m[2]:m[3]], "\"'")
+		if !secretNamed(name) {
+			return s[m[0]:m[1]]
+		}
+		value := s[m[6]:m[7]]
+		if value == redactMark {
+			return s[m[0]:m[1]]
+		}
+		if len(value) >= 2 && (value[0] == '\'' || value[0] == '"') {
+			return s[m[0]:m[6]+1] + redactMark + value[len(value)-1:]
+		}
+		return s[m[0]:m[6]] + redactMark
+	})
 	s = reTokens.ReplaceAllLiteralString(s, redactMark)
 	s = redactAssignments(s)
 	s = replaceMatches(reOption, s, func(s string, m []int) string {
-		if !secretNamed(s[m[4]:m[5]]) {
+		if !secretNamed(s[m[4]:m[5]]) || strings.HasPrefix(s[m[7]:m[1]], "-") {
 			return s[m[0]:m[1]]
 		}
 		return s[m[0]:m[7]] + redactMark
