@@ -25,15 +25,25 @@ and its contents appropriately.
 See the [environment configuration policy](docs/configuration.md) and the
 [executor environment contract](docs/executor-contract.md) for inherited variables.
 
+## Public setup
+
+Install Go 1.27.2, then clone and download the public dependencies:
+
+```sh
+git clone https://github.com/KogenAI/kogen-executor
+cd kogen-executor
+go mod download
+```
+
+For inquiries, contact contact@kogen.dev.
+
 ## Testing
 
-Then run:
+Run:
 
 ```sh
 go build ./... && go vet ./... && go test -race -count=1 ./...
 ```
-
-The module depends on private KogenAI modules: set `GOPRIVATE=github.com/KogenAI/*`.
 
 ### Updating the golden files
 

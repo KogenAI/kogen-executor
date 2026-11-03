@@ -12,10 +12,10 @@ Support ~/.kogen/claude-code/config as a symlink to an existing config directory
 - Support symlinked config directories; skip target chmod and document user responsibility. Keep plain-directory behavior unchanged. (source: answer 1)
 
 ## Source comparison
-- Addressed: request K-EXEC-CONFIG-SYMLINK-CHMOD and answer 1 select runtime support over refusal or documentation-only. The runtime policy above and the linked-config scenario reproduce config -> .claude-bench with target 0775, which currently becomes 0700.
+- Addressed: request K-EXEC-CONFIG-SYMLINK-CHMOD and answer 1 select runtime support over refusal or documentation-only. The runtime policy above and the linked-config scenario reproduce config -> <existing-config-directory> with target 0775, which currently becomes 0700.
 - Addressed: request's independence boundary limits production logic to runtime.go and focused runtime tests, with README documentation; claudecode.go is unchanged.
 - Superseded: request's unresolved support question is settled by answer 1. Its alternatives of refusing or documenting unsupported links are not the selected behavior.
-- Addressed: request's docs/configuration.md references describe upstream evidence; that file is absent in this component. README carries the supported policy here. Research-home restoration and climb/executor/LANE.md are historical evidence, not files to modify.
+- Addressed: request's docs/configuration.md references describe upstream evidence; that file is absent in this component. README carries the supported policy here. The earlier configuration restoration and its research record are historical evidence, not files to modify.
 
 ## Tests
 - Linked config preserves target 0775 and remains a symlink while runtime preparation succeeds: add focused runtime_test.go regression and linked-config acceptance (regression)
