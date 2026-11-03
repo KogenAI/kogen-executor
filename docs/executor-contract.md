@@ -7,3 +7,11 @@ The Claude Code child environment removes inherited credentials, route and neste
 - Cloud routes and authentication bypasses: `ANTHROPIC_BEDROCK_BASE_URL`, `ANTHROPIC_VERTEX_BASE_URL`, `ANTHROPIC_VERTEX_PROJECT_ID`, `ANTHROPIC_FOUNDRY_BASE_URL`, `ANTHROPIC_FOUNDRY_RESOURCE`, `CLAUDE_CODE_SKIP_BEDROCK_AUTH`, `CLAUDE_CODE_SKIP_VERTEX_AUTH`, `CLAUDE_CODE_SKIP_FOUNDRY_AUTH`.
 
 Kogen's flags and runtime configuration directory determine model and route even without `--model`. The child retains `HTTPS_PROXY`, `NO_PROXY`, `AWS_REGION` and `PATH`; proxy and region settings are not route selectors stripped by this policy. It receives exactly one runtime `CLAUDE_CONFIG_DIR`, supplied `HOME`, and each managed value: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, and `DISABLE_UPDATES=1`.
+
+## Provider failures
+
+An error result reporting Claude Code provider overload or temporary unavailability is
+`executor/provider_unavailable`, distinct from startup `executor/unavailable`. Its
+bounded, redacted detail identifies the provider diagnostic and is also reported in
+`executor_round_failed`. The session remains failed, cannot continue, and offers no
+exact resume; the adapter does not retry or switch routes.

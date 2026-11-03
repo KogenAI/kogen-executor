@@ -236,12 +236,13 @@ type Session interface {
 
 // Error reasons (class "executor").
 const (
-	ReasonUnavailable = "unavailable"
-	ReasonAuthRefused = "auth_refused"
-	ReasonFailed      = "failed"
-	ReasonUsageLimit  = "usage_limit"
-	ReasonProtocol    = "protocol"
-	ReasonDeadline    = "deadline"
+	ReasonUnavailable         = "unavailable"
+	ReasonProviderUnavailable = "provider_unavailable"
+	ReasonAuthRefused         = "auth_refused"
+	ReasonFailed              = "failed"
+	ReasonUsageLimit          = "usage_limit"
+	ReasonProtocol            = "protocol"
+	ReasonDeadline            = "deadline"
 	// ReasonInterrupted: the round context was cancelled (a sys.Interrupted from a signal
 	// keeps its own exit code and may be returned instead).
 	ReasonInterrupted = "interrupted"

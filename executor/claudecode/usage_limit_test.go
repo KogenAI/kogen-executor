@@ -41,7 +41,7 @@ func TestUsageLimitOtherErrors(t *testing.T) {
 		{"auth diagnostic", "", "executor/failed", fakeConfig{Result: map[string]any{"is_error": true, "terminal_reason": "api_error", "result": "Failed to authenticate: rate limit"}}},
 		{"generic", "", "executor/failed", fakeConfig{Result: map[string]any{"is_error": true, "terminal_reason": "api_error"}}},
 		{"authentication", "authentication_failed", "executor/failed", fakeConfig{Result: map[string]any{"is_error": true, "terminal_reason": "api_error"}}},
-		{"overloaded", "overloaded", "executor/failed", fakeConfig{Result: map[string]any{"is_error": true, "terminal_reason": "api_error"}}},
+		{"overloaded", "overloaded", "executor/provider_unavailable", fakeConfig{Result: map[string]any{"is_error": true, "terminal_reason": "api_error"}}},
 		{"exit", "", "executor/failed", fakeConfig{NoResult: true, ExitCode: 1}},
 		{"malformed", "", "executor/protocol", fakeConfig{TrailingKind: "malformed"}},
 	} {

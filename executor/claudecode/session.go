@@ -108,7 +108,11 @@ func (s *session) Round(ctx context.Context, in executor.Input) (executor.RoundR
 		if e, ok := sys.AsError(err); ok {
 			reason, detail = e.Reason, e.Detail
 		}
-		event := map[string]any{"event": "executor_round_failed", "role": s.role, "round": n, "reason": reason, "detail": bound(detail, 400), "deadline_remaining_ms": remaining}
+		eventDetail := bound(detail, 400)
+		if reason == executor.ReasonProviderUnavailable {
+			eventDetail = detail
+		}
+		event := map[string]any{"event": "executor_round_failed", "role": s.role, "round": n, "reason": reason, "detail": eventDetail, "deadline_remaining_ms": remaining}
 		if rr.interrupted {
 			addInterruptCause(event, ctx)
 		}

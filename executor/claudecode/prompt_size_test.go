@@ -80,7 +80,7 @@ func TestPromptTooLongClassification(t *testing.T) {
 		{"not an error result", "", map[string]any{"is_error": false, "terminal_reason": "blocking_limit", "result": "Prompt is too long"}, ""},
 		{"after the authentication check", "", map[string]any{"is_error": true, "terminal_reason": "api_error", "result": "Failed to authenticate: Prompt is too long"}, "executor/failed"},
 		{"authentication assistant error", "authentication_failed", map[string]any{"is_error": true, "terminal_reason": "blocking_limit", "result": "Prompt is too long"}, "executor/failed"},
-		{"another error", "", map[string]any{"is_error": true, "terminal_reason": "api_error", "result": "overloaded"}, "executor/failed"},
+		{"another error", "", map[string]any{"is_error": true, "terminal_reason": "api_error", "result": "overloaded"}, "executor/provider_unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := roleHarness(t, executor.RoleReview, fakeConfig{Script: oneRound(structuredRound(`{"verdict":"approve"}`)), AssistantError: tc.assistant, Result: tc.result})

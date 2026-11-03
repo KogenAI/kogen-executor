@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,7 @@ type roundRun struct {
 	result map[string]any // the result event, once seen
 
 	authFailed     bool // an assistant event carried error authentication_failed
+	overloaded     bool
 	rateLimited    bool
 	rateLimitCount int
 	rateLimitInfo  map[string]any
@@ -141,6 +143,9 @@ func (r *roundRun) line(b []byte) error {
 	case "assistant":
 		if e, _ := ev["error"].(string); e == "authentication_failed" {
 			r.authFailed = true
+		}
+		if e, _ := ev["error"].(string); e == "overloaded" {
+			r.overloaded = true
 		}
 		if e, _ := ev["error"].(string); e == "rate_limit" {
 			r.rateLimited = true
@@ -472,6 +477,18 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 			}
 			reason = executor.ReasonUsageLimit
 		}
+		if reason == executor.ReasonFailed && isErr && !r.authFailed && !authFailedText(res["result"]) {
+			diagnostic := providerDiagnostic(res["result"])
+			if diagnostic == "" {
+				diagnostic = providerDiagnostic(res["errors"])
+			}
+			if diagnostic == "" && r.overloaded {
+				diagnostic = "overloaded"
+			}
+			if diagnostic != "" {
+				return executor.RoundResult{}, executor.Fail(executor.ReasonProviderUnavailable, "Claude Code provider unavailable: "+diagnostic)
+			}
+		}
 		return executor.RoundResult{}, executor.Fail(reason, d)
 	}
 
@@ -727,4 +744,34 @@ func usageLimitText(v any) bool {
 		}
 	}
 	return false
+}
+
+// Match explicit overload wording or a status in an API error diagnostic, not incidental numbers.
+var providerTrouble = regexp.MustCompile(`(?i)overloaded_error|\boverloaded\b|api error:\s*(?:http\s*)?5[0-9][0-9]\b`)
+
+func providerDiagnostic(v any) string {
+	switch x := v.(type) {
+	case string:
+		loc := providerTrouble.FindStringIndex(x)
+		if loc == nil {
+			return ""
+		}
+		// A status diagnostic can contain arbitrarily much whitespace between its
+		// label and status. Keep both ends so truncation cannot discard the status.
+		if loc[1]-loc[0] > 700 {
+			return bound(x[loc[0]:loc[0]+100]+" ... "+x[loc[1]-100:loc[1]], 990)
+		}
+		start := max(0, loc[0]-200)
+		for start < loc[0] && !isRuneStart(x[start]) {
+			start++
+		}
+		return bound(boundBytes(x[start:], 990), 990)
+	case []any:
+		for _, item := range x {
+			if d := providerDiagnostic(item); d != "" {
+				return d
+			}
+		}
+	}
+	return ""
 }

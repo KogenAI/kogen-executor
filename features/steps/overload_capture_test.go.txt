@@ -1,0 +1,33 @@
+package claudecode
+
+import (
+ "encoding/json"
+ "fmt"
+ "os"
+ "testing"
+ "github.com/KogenAI/kogen-executor/executor"
+ "kogen-loop/sys"
+)
+
+func TestOverloadCapture(t *testing.T) {
+ var c struct { Assistant string; Text string; Error bool; Auth bool; Malformed bool }
+ if err := json.Unmarshal([]byte(os.Getenv("OVERLOAD_INPUT")), &c); err != nil { t.Fatal(err) }
+ h := newHarness(t, fakeConfig{Script: oneRound(finishRound), AssistantError:c.Assistant, TrailingKind: func() string { if c.Malformed { return "malformed" }; return "" }(), Result:map[string]any{"is_error":c.Error,"terminal_reason":"api_error","result":c.Text}})
+ opts := h.f.options()
+ if c.Auth { opts.Token="sk-ant-oat01-SYNTHETIC-BAD" }
+ s, err := h.start(opts)
+ if err != nil { t.Fatal(err) }
+ defer s.Close()
+ result, err := s.Round(t.Context(), executor.Input{})
+ events := h.eventsNamed("executor_round_failed")
+ if events == nil { events = []map[string]any{} }
+ row := map[string]any{"class":"", "reason":"", "detail":"", "ending":result.Ending,"resume":s.Handle().Resume,"events":events}
+ if err != nil {
+  e, ok := sys.AsError(err); if !ok { t.Fatal(err) }
+  row["class"], row["reason"], row["detail"] = e.Class,e.Reason,e.Detail
+  _, next := s.Round(t.Context(),executor.Input{Feedback:"continue"})
+  if e,ok := sys.AsError(next); ok { row["next"] = e.Detail } else { row["next"] = fmt.Sprint(next) }
+ }
+ b,err := json.Marshal(row); if err != nil { t.Fatal(err) }
+ fmt.Println("OVERLOAD_CAPTURE="+string(b))
+}
