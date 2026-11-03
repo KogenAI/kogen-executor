@@ -14,6 +14,15 @@ It is a component of [Kogen](https://github.com/KogenAI/kogen), which pins an ex
 - `testproc`: process isolation for tests with process-wide state.
 - `core`: what kogen-build and kogen-review share: token totals, the review record, an external executor's state and usage and the small encodings both write. The persisted Build state and the run record are kogen-build's; the review's contract and its material are kogen-review's.
 
+## Decoding JSON for display
+
+Consumer callers that pass decoded JSON values to `core.Display` should use
+`core.DecodeJSON(data, &target)`. It decodes one complete JSON value and retains
+numbers in interface-valued positions as `json.Number`, including in nested
+maps and arrays, so their JSON text is preserved for display. Ordinary
+`encoding/json.Unmarshal` still decodes interface numbers as `float64`;
+`core.Display` retains its float interpolation behavior for those values.
+
 ## Claude Code configuration
 
 Kogen uses `~/.kogen/claude-code/config` for its Claude Code configuration.

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"unicode"
@@ -32,6 +33,25 @@ func EncodeJSON(v any) ([]byte, error) {
 		return nil, err
 	}
 	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+}
+
+// DecodeJSON decodes exactly one JSON value, preserving numbers in interface values
+// as json.Number. Use it before Display to retain the original number text; unlike
+// encoding/json.Unmarshal, it does not convert interface numbers to float64.
+func DecodeJSON(data []byte, target any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("unexpected trailing JSON value")
+	}
+	return nil
 }
 
 // HashHex is the SHA-256 of b in hex.
