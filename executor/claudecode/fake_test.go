@@ -214,8 +214,10 @@ func fakeClaude(cfgPath string, args []string) int {
 		out(map[string]any{"type": "assistant", "session_id": sessionID, "error": "authentication_failed", "message": map[string]any{
 			"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "Failed to authenticate. API Error: 401 OAuth access token is invalid."}},
 		}})
-		out(map[string]any{"type": "result", "subtype": "success", "is_error": true, "num_turns": 1, "session_id": sessionID,
-			"result": "Failed to authenticate. API Error: 401 OAuth access token is invalid."})
+		authResult := map[string]any{"type": "result", "subtype": "success", "is_error": true, "num_turns": 1, "session_id": sessionID,
+			"result": "Failed to authenticate. API Error: 401 OAuth access token is invalid."}
+		merge(authResult, cfg.Result)
+		out(authResult)
 		return 1
 	}
 	if cfg.NoResult {

@@ -1,0 +1,49 @@
+package contract_test
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+// TestFailedUsageCapture runs the rounds in FAILED_USAGE_ROUNDS through the real adapter on the
+// contract fake and prints each round's terminal event as FAILED_USAGE_CAPTURE=<json>, with the
+// session id written as @SID@.
+func TestFailedUsageCapture(t *testing.T) {
+	var rounds [][]string
+	if err := json.Unmarshal([]byte(os.Getenv("FAILED_USAGE_ROUNDS")), &rounds); err != nil {
+		t.Fatal(err)
+	}
+	r, err := startFake(t, executor.RoleBuild, rounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := r.session.Handle().SessionID
+	for i := range rounds {
+		in := executor.Input{}
+		if i > 0 {
+			in.Feedback = "continue"
+		}
+		_, rerr := r.session.Round(t.Context(), in)
+		name := "executor_round_ended"
+		if rerr != nil {
+			name = "executor_round_failed"
+		}
+		events := r.events.named(name)
+		if len(events) == 0 {
+			t.Fatalf("round %d emitted no %s event", i+1, name)
+		}
+		b, err := json.Marshal(events[len(events)-1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Println("FAILED_USAGE_CAPTURE=" + strings.ReplaceAll(string(b), sid, "@SID@"))
+		if rerr != nil {
+			break
+		}
+	}
+}

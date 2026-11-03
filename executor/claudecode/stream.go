@@ -503,7 +503,17 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 // nil, never zero). CostUSD is the delta of the cumulative total_cost_usd since the previous
 // round of this session: Claude Code's API-equivalent estimate, not a bill.
 func (s *session) mapUsage(res map[string]any, model string) executor.Usage {
-	u := executor.Usage{State: executor.UsageUnknown, Source: executor.UsageHarness, Model: model}
+	u, total, ok := s.usageOf(res, model)
+	if ok {
+		s.prevCost = total
+	}
+	return u
+}
+
+// usageOf is mapUsage without advancing the session's cost baseline: it also returns the
+// result's cumulative total and whether that total became the CostUSD delta.
+func (s *session) usageOf(res map[string]any, model string) (u executor.Usage, cumulative float64, advanced bool) {
+	u = executor.Usage{State: executor.UsageUnknown, Source: executor.UsageHarness, Model: model}
 	if usage, ok := res["usage"].(map[string]any); ok {
 		in, cr, cw := countPtr(usage["input_tokens"]), countPtr(usage["cache_read_input_tokens"]), countPtr(usage["cache_creation_input_tokens"])
 		u.Cached, u.Output = cr, countPtr(usage["output_tokens"])
@@ -521,9 +531,34 @@ func (s *session) mapUsage(res map[string]any, model string) executor.Usage {
 	if total, ok := number(res["total_cost_usd"]); ok && total >= s.prevCost {
 		d := math.Round((total-s.prevCost)*1e9) / 1e9
 		u.CostUSD = &d
-		s.prevCost = total
+		return u, total, true
 	}
-	return u
+	return u, 0, false
+}
+
+// addResult adds what the round's result line reported to a failed round's event: usage (as on
+// executor_round_ended), num_turns, subtype and terminal_reason. A round whose stream never
+// reached a result line, and a field the result did not report, add nothing. The session's cost
+// baseline is not advanced.
+func (r *roundRun) addResult(event map[string]any) {
+	res := r.result
+	if res == nil {
+		return
+	}
+	_, hasUsage := res["usage"].(map[string]any)
+	_, hasCost := res["total_cost_usd"].(json.Number)
+	if hasUsage || hasCost {
+		u, _, _ := r.s.usageOf(res, r.model)
+		event["usage"] = usageEvent(u)
+	}
+	if n := countPtr(res["num_turns"]); n != nil {
+		event["num_turns"] = *n
+	}
+	for _, k := range []string{"subtype", "terminal_reason"} {
+		if v, ok := res[k].(string); ok && v != "" {
+			event[k] = v
+		}
+	}
 }
 
 func usageEvent(u executor.Usage) map[string]any {

@@ -112,6 +112,7 @@ func (s *session) Round(ctx context.Context, in executor.Input) (executor.RoundR
 		if rr.interrupted {
 			addInterruptCause(event, ctx)
 		}
+		rr.addResult(event)
 		rr.addRateLimit(event)
 		rr.addProfile(event)
 		s.emit(event)
