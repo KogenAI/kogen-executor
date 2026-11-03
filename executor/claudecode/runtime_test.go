@@ -356,7 +356,7 @@ func TestConfigDirectoryPermissions(t *testing.T) {
 			if err := os.MkdirAll(RuntimeDir(home), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(RuntimePath(home), nil, 0o700); err != nil {
+			if err := os.WriteFile(RuntimePath(home), []byte("runtime"), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			config := ConfigDir(home)
@@ -397,6 +397,79 @@ func TestConfigDirectoryPermissions(t *testing.T) {
 			}
 			if got := link.Mode()&os.ModeSymlink != 0; got != (kind == "linked") {
 				t.Errorf("symlink = %v", got)
+			}
+		})
+	}
+}
+
+func TestUnusableRuntimeEntries(t *testing.T) {
+	for _, kind := range []string{"dangling", "directory", "empty", "not executable"} {
+		t.Run(kind, func(t *testing.T) {
+			s := newSeam(t, []byte("unused"), "", nil)
+			h := newHarness(t, fakeConfig{})
+			opts := h.f.options()
+			p := RuntimePath(opts.Home)
+			if err := os.Remove(p); err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "dangling":
+				if err := os.Symlink("missing", p); err != nil {
+					t.Fatal(err)
+				}
+			case "directory":
+				if err := os.Mkdir(p, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(p, "keep"), []byte("keep"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "empty":
+				if err := os.WriteFile(p, nil, 0755); err != nil {
+					t.Fatal(err)
+				}
+			case "not executable":
+				if err := os.WriteFile(p, []byte("keep"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a := New(opts).(*adapter)
+			for _, run := range []func() error{
+				func() error { _, err := a.Start(context.Background(), h.task, nil); return err },
+				func() error { return a.install(context.Background()) },
+				func() error { _, err := a.binary(); return err },
+			} {
+				e := wantError(t, run(), "executor/unavailable")
+				if !strings.Contains(e.Detail, kind) || !strings.Contains(e.Detail, "remove "+RuntimeDir(opts.Home)+" and run again") {
+					t.Fatalf("detail: %s", e.Detail)
+				}
+			}
+			if len(s.requests) != 0 {
+				t.Fatalf("unexpected requests: %v", s.requests)
+			}
+			switch kind {
+			case "dangling":
+				target, err := os.Readlink(p)
+				if err != nil || target != "missing" {
+					t.Fatalf("link: %q %v", target, err)
+				}
+			case "directory":
+				b, err := os.ReadFile(filepath.Join(p, "keep"))
+				if err != nil || string(b) != "keep" {
+					t.Fatalf("directory: %q %v", b, err)
+				}
+			default:
+				b, err := os.ReadFile(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := "keep"
+				if kind == "empty" {
+					want = ""
+				}
+				if string(b) != want {
+					t.Fatalf("content: %q", b)
+				}
 			}
 		})
 	}

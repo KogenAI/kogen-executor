@@ -129,7 +129,11 @@ func (a *adapter) binary() (string, error) {
 		return "", unavailable("cannot locate your home directory for Kogen's Claude Code runtime")
 	}
 	p := RuntimePath(a.opts.Home)
-	if _, err := os.Stat(p); err != nil {
+	present, err := runtimeUsable(a.opts.Home)
+	if err != nil {
+		return "", err
+	}
+	if !present {
 		return "", unavailable("Kogen's Claude Code " + Version + " is not installed at " + p)
 	}
 	return p, nil

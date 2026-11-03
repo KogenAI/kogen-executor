@@ -101,6 +101,42 @@ func seamOrigin() (origin string, set bool, err error) {
 	return v, true, nil
 }
 
+// runtimeUsable distinguishes an absent entry from one that requires user intervention.
+func runtimeUsable(home string) (bool, error) {
+	p := RuntimePath(home)
+	info, err := os.Lstat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, unavailable("cannot inspect " + p + ": " + err.Error())
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		info, err = os.Stat(p)
+		if errors.Is(err, os.ErrNotExist) {
+			return false, unavailable("Kogen's Claude Code at " + p + " is a dangling symlink; remove " + RuntimeDir(home) + " and run again")
+		}
+		if err != nil {
+			return false, unavailable("cannot inspect " + p + ": " + err.Error())
+		}
+	}
+	kind := ""
+	switch {
+	case info.IsDir():
+		kind = "a directory"
+	case !info.Mode().IsRegular():
+		kind = "not a regular file"
+	case info.Size() == 0:
+		kind = "empty"
+	case info.Mode().Perm()&0o111 == 0:
+		kind = "not executable"
+	}
+	if kind != "" {
+		return false, unavailable("Kogen's Claude Code at " + p + " is " + kind + "; remove " + RuntimeDir(home) + " and run again")
+	}
+	return true, nil
+}
+
 // ensureRuntime makes the pinned runtime and Kogen's configuration directory exist before the
 // first child of a role start, installing the runtime when it is not there.
 func (a *adapter) ensureRuntime(ctx context.Context) error {
@@ -128,8 +164,8 @@ func (a *adapter) ensureRuntime(ctx context.Context) error {
 			return unavailable("cannot secure " + dir + ": " + err.Error())
 		}
 	}
-	if _, err := os.Lstat(RuntimePath(a.opts.Home)); err == nil {
-		return nil
+	if present, err := runtimeUsable(a.opts.Home); err != nil || present {
+		return err
 	}
 	return a.install(ctx)
 }
@@ -158,8 +194,8 @@ func (a *adapter) install(ctx context.Context) error {
 			return unavailable("cannot remove the unfinished installation " + p + ": " + err.Error())
 		}
 	}
-	if _, err := os.Lstat(RuntimePath(a.opts.Home)); err == nil {
-		return nil
+	if present, err := runtimeUsable(a.opts.Home); err != nil || present {
+		return err
 	}
 	partial, err := os.MkdirTemp(root, ".partial-")
 	if err != nil {

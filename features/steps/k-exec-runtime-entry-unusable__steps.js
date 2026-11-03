@@ -1,0 +1,24 @@
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),cp=require('node:child_process'),assert=require('node:assert/strict');
+const source=`package main
+import("context";"encoding/json";"os";"path/filepath";cc "github.com/KogenAI/kogen-executor/executor/claudecode";ex "github.com/KogenAI/kogen-executor/executor")
+func main(){h:=os.Args[1];a:=cc.New(cc.Options{Home:h,HookCommand:[]string{"unused"}});s,e:=a.Start(context.Background(),ex.Task{Role:ex.RoleBuild,Schema:json.RawMessage("{}"),Root:h,Dir:filepath.Join(h,"artifacts")},nil);msg:="";if e!=nil{msg=e.Error()};json.NewEncoder(os.Stdout).Encode(map[string]any{"started":s!=nil,"error":msg})}
+`;
+function observe(r,kind,folder){assert.equal(r.started,false);assert.match(r.error,/executor\/unavailable/);assert.ok(r.error.includes(folder),r.error);assert.match(r.error,/remove/i);assert.doesNotMatch(r.error,/not installed/i);assert.match(r.error,kind==='dangling'?/dangling/i:kind==='directory'?/directory/i:/not executable|empty/i);}
+if(require.main===module){const r={started:false,error:'executor/unavailable: dangling link; remove /fixture/runtime and run again'};if(process.argv[2]==='bad')r.error='executor/unavailable: is not installed at /fixture/runtime';try{observe(r,'dangling','/fixture/runtime');console.log('accepted');}catch(e){console.log('rejected');process.exitCode=1;}}
+else{
+const {When,Then,After}=require('@cucumber/cucumber');
+When('k-exec-runtime-entry-unusable: I start with {string}',async function(kind){
+ this.h=fs.mkdtempSync(path.join(os.tmpdir(),'entry-'));this.d=fs.mkdtempSync(path.join(process.cwd(),'.entry-driver-'));fs.writeFileSync(path.join(this.d,'main.go'),source);
+ this.bin=path.join(this.d,'driver');const build=cp.spawnSync('go',['build','-o',this.bin,path.join(this.d,'main.go')],{encoding:'utf8',timeout:120000});assert.equal(build.status,0,build.stdout+build.stderr);
+ this.folder=path.join(this.h,'.kogen','claude-code','2.1.312');this.p=path.join(this.folder,'claude');fs.mkdirSync(this.folder,{recursive:true});this.kind=kind;
+ this.script='#!/bin/sh\ncase "$1" in\n--version) echo "2.1.312 (Claude Code)";;\nauth) echo \'{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}\';;\n*) exit 1;;\nesac\n';
+ if(kind==='dangling')fs.symlinkSync('missing-target',this.p);else if(kind==='directory'){fs.mkdirSync(this.p);fs.writeFileSync(path.join(this.p,'keep'),'unchanged');}else if(kind==='empty')fs.writeFileSync(this.p,'',{mode:0o755});else if(kind==='0644'||kind==='valid')fs.writeFileSync(this.p,this.script,{mode:kind==='0644'?0o644:0o755});else assert.equal(kind,'absent');
+ this.requests=[];const crypto=require('node:crypto');const pin={checksum:crypto.createHash('sha256').update(this.script).digest('hex'),size:Buffer.byteLength(this.script)};
+ this.server=require('node:http').createServer((req,res)=>{this.requests.push(req.url);if(req.url==='/2.1.312/manifest.json')res.end(JSON.stringify({platforms:{'linux-x64':pin,'darwin-arm64':pin}}));else if(/^\/2\.1\.312\/(linux-x64|darwin-arm64)\/claude$/.test(req.url))res.end(this.script);else{res.statusCode=404;res.end();}});await new Promise(r=>this.server.listen(0,'127.0.0.1',r));
+ this.run=()=>new Promise((resolve,reject)=>{const child=cp.spawn(this.bin,[this.h],{env:{...process.env,KOGEN_CLAUDE_CODE_URL:'http://127.0.0.1:'+this.server.address().port}});let out='',err='';child.stdout.on('data',x=>out+=x);child.stderr.on('data',x=>err+=x);const timer=setTimeout(()=>child.kill('SIGKILL'),30000);child.on('error',reject);child.on('close',code=>{clearTimeout(timer);if(code!==0)reject(Error('driver exit '+code+' '+out+' '+err));else{try{resolve(JSON.parse(out));}catch(e){reject(e);}}});});this.result=await this.run();
+});
+Then('k-exec-runtime-entry-unusable: it names the unusable entry without changing it',function(){observe(this.result,this.kind,this.folder);assert.deepEqual(this.requests,[]);const st=fs.lstatSync(this.p);if(this.kind==='dangling')assert.equal(fs.readlinkSync(this.p),'missing-target');else if(this.kind==='directory')assert.equal(fs.readFileSync(path.join(this.p,'keep'),'utf8'),'unchanged');else{assert.equal(fs.readFileSync(this.p,'utf8'),this.kind==='empty'?'':this.script);assert.equal(st.mode&0o777,this.kind==='0644'?0o644:0o755);}});
+When('k-exec-runtime-entry-unusable: I remove the named folder and start again',async function(){fs.rmSync(this.folder,{recursive:true});this.result=await this.run();});
+Then('k-exec-runtime-entry-unusable: start succeeds with {int} downloads',function(n){assert.deepEqual(this.result,{started:true,error:''});assert.equal(this.requests.filter(x=>x.endsWith('/claude')).length,n);assert.equal(fs.readFileSync(this.p,'utf8'),this.script);});
+After(async function(){if(this.server)await new Promise(r=>this.server.close(r));if(this.h)fs.rmSync(this.h,{recursive:true,force:true});if(this.d)fs.rmSync(this.d,{recursive:true,force:true});});
+}
