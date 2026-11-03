@@ -112,6 +112,37 @@ func TestToolArgumentsRedactionRules(t *testing.T) {
 	}
 }
 
+func TestToolArgumentsNonsecretNames(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"FILE", "PATH", "STDIN", "LIMIT", "COUNT", "LENGTH", "SIZE", "NAME", "HELPER", "TTL", "MAX", "MIN"} {
+		for _, command := range []string{
+			"PASSWORD_" + suffix + "=value ./run",
+			"tool --password-" + strings.ToLower(suffix) + " value next",
+		} {
+			if got := redactSecrets(command, nil); got != command {
+				t.Errorf("%q: got %q", command, got)
+			}
+		}
+	}
+	cases := []struct{ in, want string }{
+		{"tool --no-password host --no-token next", "tool --no-password host --no-token next"},
+		{"tool --no-password --password value run", "tool --no-password --password [redacted] run"},
+		{"tool --password-file --token value run", "tool --password-file --token [redacted] run"},
+		{"NO_PASSWORD=value tool", "NO_PASSWORD=value tool"},
+		{"python --tokenizer=cl100k --max-tokens=4096", "python --tokenizer=cl100k --max-tokens=4096"},
+		{"TOKENS=4096 tool --tokenizer 123", "TOKENS=4096 tool --tokenizer 123"},
+		{"tool --PaSsWoRd-FiLe /tmp/pw", "tool --PaSsWoRd-FiLe /tmp/pw"},
+		{"API_TOKEN=4096 tool --client-secret value", "API_TOKEN=[redacted] tool --client-secret [redacted]"},
+		{"PASSWORD_FILE=env-held-FAKE-value-5678 --no-password env-held-FAKE-value-5678", "PASSWORD_FILE=[redacted] --no-password [redacted]"},
+	}
+	env := secretEnvValues([]string{"DB_PASSWORD=env-held-FAKE-value-5678"})
+	for _, c := range cases {
+		if got := redactSecrets(c.in, env); got != c.want {
+			t.Errorf("%q: got %q want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestToolArgumentsStringBound(t *testing.T) {
 	t.Parallel()
 	args := func(v string) map[string]any {

@@ -16,14 +16,22 @@ const (
 	argMinEnvBytes = 8
 )
 
-// secretWords are the fragments that make a NAME secret-named.
+// secretWords are the separated words or word sequences that make a NAME secret-named.
 var secretWords = []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "PASSPHRASE", "API_KEY", "APIKEY", "ACCESS_KEY", "PRIVATE_KEY", "CREDENTIAL"}
 
 // secretNamed reports whether an environment, assignment or option NAME looks like it holds a secret.
 func secretNamed(name string) bool {
 	n := strings.ToUpper(strings.ReplaceAll(strings.TrimLeft(name, "-"), "-", "_"))
+	parts := strings.Split(n, "_")
+	if parts[0] == "NO" {
+		return false
+	}
+	switch parts[len(parts)-1] {
+	case "FILE", "PATH", "STDIN", "LIMIT", "COUNT", "LENGTH", "SIZE", "NAME", "HELPER", "TTL", "MAX", "MIN":
+		return false
+	}
 	for _, w := range secretWords {
-		if strings.Contains(n, w) {
+		if strings.Contains("_"+n+"_", "_"+w+"_") {
 			return true
 		}
 	}
@@ -108,13 +116,28 @@ func redactSecrets(s string, envValues []string) string {
 	})
 	s = reTokens.ReplaceAllLiteralString(s, redactMark)
 	s = redactAssignments(s)
-	s = replaceMatches(reOption, s, func(s string, m []int) string {
-		if !secretNamed(s[m[4]:m[5]]) || strings.HasPrefix(s[m[7]:m[1]], "-") {
-			return s[m[0]:m[1]]
+	// A nonsecret option must not hide a subsequent secret option from the scan.
+	var b strings.Builder
+	for offset := 0; offset < len(s); {
+		m := reOption.FindStringSubmatchIndex(s[offset:])
+		if m == nil {
+			b.WriteString(s[offset:])
+			break
 		}
-		return s[m[0]:m[7]] + redactMark
-	})
-	return s
+		part := s[offset:]
+		if secretNamed(part[m[4]:m[5]]) && !strings.HasPrefix(part[m[7]:m[1]], "-") {
+			b.WriteString(part[:m[7]])
+			b.WriteString(redactMark)
+			offset += m[1]
+		} else if strings.HasPrefix(part[m[7]:m[1]], "-") {
+			b.WriteString(part[:m[5]])
+			offset += m[5]
+		} else {
+			b.WriteString(part[:m[1]])
+			offset += m[1]
+		}
+	}
+	return b.String()
 }
 
 // redactAssignments replaces the VALUE of every secret-named NAME=VALUE in s. Each '=' is checked
