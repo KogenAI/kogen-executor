@@ -29,7 +29,7 @@ import (
 type Options struct {
 	// Home is the user's home directory: Kogen's Claude Code lives under <Home>/.kogen/claude-code.
 	Home string
-	// Stderr receives the two installation progress lines (default os.Stderr).
+	// Stderr receives installation progress and lock-wait notices (default os.Stderr).
 	Stderr io.Writer
 	// HookCommand is the Kogen binary and hidden subcommand that run the hooks, e.g.
 	// [os.Executable(), HookSubcommand]. Required for prevention; Start refuses without it.
@@ -66,6 +66,7 @@ func New(opts Options) executor.Executor {
 type adapter struct {
 	opts         Options
 	goos, goarch string
+	downloadIdle time.Duration
 }
 
 // Describe reports the executor's capabilities and exact version. It never fails: an

@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,6 +28,10 @@ const Version = "2.1.312"
 
 // SeamEnv is the test-only download origin (http://127.0.0.1:<port> or http://localhost:<port>).
 const SeamEnv = "KOGEN_CLAUDE_CODE_URL"
+
+const downloadIdleTimeout = 30 * time.Second
+
+func (a *adapter) setDownloadIdleTimeoutForTest(d time.Duration) { a.downloadIdle = d }
 
 const downloadBase = "https://downloads.claude.ai/claude-code-releases"
 
@@ -182,7 +187,7 @@ func (a *adapter) install(ctx context.Context) error {
 		base = origin
 	}
 	root := Root(a.opts.Home)
-	lock, err := lockInstall(ctx, filepath.Join(root, "install.lock"))
+	lock, err := lockInstall(ctx, filepath.Join(root, "install.lock"), a.stderr())
 	if err != nil {
 		return err
 	}
@@ -218,25 +223,40 @@ func (a *adapter) install(ctx context.Context) error {
 		want.sha256, want.size = checksum, size
 	}
 	source := base + "/" + Version + "/" + want.platform + "/claude"
-	resp, err := a.get(ctx, source)
+	downloadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	resp, err := a.get(downloadCtx, source)
 	if err != nil {
+		if ctx.Err() != nil {
+			return classify(ctx)
+		}
 		return err
 	}
 	defer resp.Body.Close()
+	idle := a.downloadIdle
+	if idle == 0 {
+		idle = downloadIdleTimeout
+	}
+	reader := newIdleReader(resp.Body, idle, cancel)
+	defer reader.stop()
 	file := filepath.Join(partial, "claude")
 	out, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o700)
 	if err != nil {
 		return unavailable("cannot create " + file + ": " + err.Error())
 	}
 	hash := sha256.New()
-	n, err := io.Copy(io.MultiWriter(out, hash), io.LimitReader(resp.Body, want.size+1))
+	n, err := io.Copy(io.MultiWriter(out, hash), io.LimitReader(reader, want.size+1))
 	if cerr := out.Close(); err == nil {
 		err = cerr
 	}
+	stalled := reader.stop()
+	if ctx.Err() != nil {
+		return classify(ctx)
+	}
+	if stalled {
+		return unavailable("cannot download Claude Code " + Version + " from " + source + ": connection stalled")
+	}
 	if err != nil {
-		if ctx.Err() != nil {
-			return classify(ctx)
-		}
 		return unavailable("cannot download Claude Code " + Version + " from " + source + ": " + err.Error())
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
@@ -264,6 +284,55 @@ func (a *adapter) install(ctx context.Context) error {
 	installed = true
 	fmt.Fprintf(a.stderr(), "kogen: installed Claude Code %s (sha256 %s)\n", Version, digest)
 	return nil
+}
+
+// idleReader cancels the request when no body bytes arrive for an idle interval.
+type idleReader struct {
+	io.Reader
+	mu               sync.Mutex
+	timer            *time.Timer
+	last             time.Time
+	interval         time.Duration
+	cancel           context.CancelFunc
+	stopped, stalled bool
+}
+
+func newIdleReader(r io.Reader, interval time.Duration, cancel context.CancelFunc) *idleReader {
+	b := &idleReader{Reader: r, interval: interval, cancel: cancel, last: time.Now()}
+	b.timer = time.AfterFunc(interval, b.expire)
+	return b
+}
+func (b *idleReader) expire() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.stopped {
+		return
+	}
+	if remaining := b.interval - time.Since(b.last); remaining > 0 {
+		b.timer.Reset(remaining)
+		return
+	}
+	b.stalled = true
+	b.cancel()
+}
+func (b *idleReader) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if n > 0 {
+		b.mu.Lock()
+		if !b.stalled && !b.stopped {
+			b.last = time.Now()
+			b.timer.Reset(b.interval)
+		}
+		b.mu.Unlock()
+	}
+	return n, err
+}
+func (b *idleReader) stop() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.stopped = true
+	b.timer.Stop()
+	return b.stalled
 }
 
 // get is one HTTP GET with no timeout of its own; anything but 200 is a refusal.
@@ -320,11 +389,12 @@ func (a *adapter) fetchManifest(ctx context.Context, source, platform string) (c
 }
 
 // lockInstall takes the exclusive lock on path, waiting for another Kogen's installation.
-func lockInstall(ctx context.Context, path string) (*os.File, error) {
+func lockInstall(ctx context.Context, path string, stderr io.Writer) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, unavailable("cannot open the install lock " + path + ": " + err.Error())
 	}
+	noticed := false
 	for {
 		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
@@ -333,6 +403,10 @@ func lockInstall(ctx context.Context, path string) (*os.File, error) {
 		if err != syscall.EWOULDBLOCK && err != syscall.EINTR {
 			f.Close()
 			return nil, unavailable("cannot lock " + path + ": " + err.Error())
+		}
+		if err == syscall.EWOULDBLOCK && !noticed {
+			fmt.Fprint(stderr, "kogen: another Claude Code installation is in progress; waiting\n")
+			noticed = true
 		}
 		select {
 		case <-ctx.Done():

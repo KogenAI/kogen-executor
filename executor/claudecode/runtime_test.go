@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -299,7 +300,7 @@ func TestWaitingForTheLockEndsWithTheContext(t *testing.T) {
 	if err := os.MkdirAll(Root(home), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	held, err := lockInstall(context.Background(), filepath.Join(Root(home), "install.lock"))
+	held, err := lockInstall(context.Background(), filepath.Join(Root(home), "install.lock"), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,6 +471,82 @@ func TestUnusableRuntimeEntries(t *testing.T) {
 				if string(b) != want {
 					t.Fatalf("content: %q", b)
 				}
+			}
+		})
+	}
+}
+
+func TestDownloadIdleProgressAndStall(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		gap       time.Duration
+		firstByte bool
+		stalled   bool
+	}{
+		{"progress", 120 * time.Millisecond, false, false},
+		{"gap expires", 350 * time.Millisecond, false, true},
+		{"first byte expires", 350 * time.Millisecond, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			binary := script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs"))
+			s := newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
+				w.Header().Set("Content-Length", fmt.Sprint(len(b)))
+				w.WriteHeader(http.StatusOK)
+				w.(http.Flusher).Flush()
+				if !tc.firstByte {
+					w.Write(b[:1])
+					w.(http.Flusher).Flush()
+				}
+				for i := 1; i < 4; i++ {
+					select {
+					case <-r.Context().Done():
+						return
+					case <-time.After(tc.gap):
+					}
+					if !tc.firstByte {
+						w.Write(b[i : i+1])
+						w.(http.Flusher).Flush()
+					}
+				}
+				if tc.firstByte {
+					w.Write(b)
+				} else {
+					w.Write(b[4:])
+				}
+			})
+			home := t.TempDir()
+			a := installer(home, nil)
+			a.setDownloadIdleTimeoutForTest(200 * time.Millisecond)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			result := make(chan error, 1)
+			go func() { result <- a.ensureRuntime(ctx) }()
+			var err error
+			select {
+			case err = <-result:
+			case <-time.After(3 * time.Second):
+				cancel()
+				<-result
+				t.Fatal("download did not finish")
+			}
+			if tc.stalled {
+				e := wantError(t, err, "executor/unavailable")
+				if !strings.Contains(e.Detail, s.URL) || !strings.Contains(e.Detail, "stalled") {
+					t.Fatalf("detail %q", e.Detail)
+				}
+				if names := entries(t, Root(home)); strings.Join(names, " ") != "config install.lock" {
+					t.Fatalf("entries %v", names)
+				}
+				f, err := os.OpenFile(filepath.Join(Root(home), "install.lock"), os.O_RDWR, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+					t.Fatal(err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
