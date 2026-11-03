@@ -1,0 +1,95 @@
+package claudecode
+
+import (
+ "context"
+ "crypto/sha256"
+ "encoding/hex"
+ "encoding/json"
+ "fmt"
+ "io"
+ "os"
+ "path/filepath"
+ "runtime"
+ "strconv"
+ "strings"
+ "syscall"
+ "testing"
+ "time"
+)
+
+type transportReceipt struct { PID int; Digest string; Length int; Private bool }
+
+func init() {
+ mode := os.Getenv("TOKEN_TRANSPORT_FAKE")
+ if mode == "" { return }
+ r := transportReceipt{PID: os.Getpid(), Private:true}
+ for _, v := range append(os.Environ(), os.Args...) {
+  if strings.Contains(v, "SYNTHETIC-token-transport") { r.Private = false }
+ }
+ save := func() { b,_ := json.Marshal(r); os.WriteFile(os.Getenv("TOKEN_TRANSPORT_RECEIPT"), b, 0600) }
+ save()
+ if mode == "never" { for { time.Sleep(time.Hour) } }
+ if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR") == "3" {
+  b,err := io.ReadAll(os.NewFile(3,"token")); if err != nil { os.Exit(72) }
+  h := sha256.Sum256(b); r.Digest=hex.EncodeToString(h[:]); r.Length=len(b)
+ } else { h:=sha256.Sum256(nil); r.Digest=hex.EncodeToString(h[:]) }
+ save()
+ os.Exit(0)
+}
+
+func TestTokenTransportAcceptance(t *testing.T) {
+ sizes := []string{"large","short","empty"}
+ modes := []string{"read","never","missing"}
+ for _, size := range sizes { for _, mode := range modes {
+  key := size+"/"+mode
+  if only:=os.Getenv("TOKEN_TRANSPORT_CASE"); only!="" && only!=key { continue }
+  t.Run(key,func(t *testing.T) {
+   dir:=t.TempDir()
+   r,w,err:=os.Pipe(); if err!=nil { t.Fatal(err) }
+   cap,_,errno:=syscall.Syscall(syscall.SYS_FCNTL,r.Fd(),1032,0)
+   r.Close(); w.Close()
+   if errno!=0 || cap==0 { t.Fatal("cannot measure Linux pipe capacity") }
+   tok:="SYNTHETIC-token-transport short\n \n"
+   if size=="empty" { tok="" }
+   if size=="large" && os.Getenv("TOKEN_TRANSPORT_CONTROL")=="" { tok=strings.Repeat("SYNTHETIC-token-transport\n ",int(cap)/20+2); if len(tok)<=int(cap) { t.Fatal("fixture not above capacity") } }
+   a:=New(Options{Token:tok}).(*adapter)
+   binary,_:=os.Executable()
+   if mode=="missing" { binary=filepath.Join(dir,"no-executable") }
+   receipt:=filepath.Join(dir,"receipt")
+   env:=a.childEnv("",tok)
+   env=append(env,"TOKEN_TRANSPORT_FAKE="+mode,"TOKEN_TRANSPORT_RECEIPT="+receipt)
+   // Warm Go's poller before comparing descriptor ownership.
+   ctx0,c0:=context.WithTimeout(context.Background(),time.Millisecond); <-ctx0.Done(); c0()
+   before,_:=os.ReadDir("/proc/self/fd")
+   ctx,cancel:=context.WithTimeout(context.Background(),300*time.Millisecond)
+   begin:=time.Now()
+   out,runErr:=a.run(ctx,binary,env,tok)
+   cancel()
+   if time.Since(begin)>3*time.Second { t.Fatal("operation did not return through bounded cancellation") }
+   if tok!="" && (strings.Contains(string(out),tok) || (runErr!=nil && strings.Contains(runErr.Error(),tok))) { t.Fatal("token disclosed") }
+   b,statErr:=os.ReadFile(receipt)
+   var got transportReceipt
+   if statErr==nil { if json.Unmarshal(b,&got)!=nil { t.Fatal("invalid receipt") }; if !got.Private { t.Fatal("token escaped private descriptor") } }
+   if mode=="read" {
+    if runErr==nil {
+     if statErr!=nil { t.Fatal("successful operation has no receipt") }
+     h:=sha256.Sum256([]byte(tok)); want:=hex.EncodeToString(h[:])
+     if os.Getenv("TOKEN_TRANSPORT_CONTROL")=="bad" { want="wrong" }
+     if got.Length!=len(tok) || got.Digest!=want { t.Fatal("token bytes differ") }
+    } else if size!="large" || os.Getenv("TOKEN_TRANSPORT_CONTROL")!="" || statErr==nil { t.Fatal("unexpected refusal or refusal after child started") }
+   } else {
+    if runErr==nil { t.Fatal("failure or cancellation required") }
+    if mode=="never" && statErr!=nil && (size!="large" || os.Getenv("TOKEN_TRANSPORT_CONTROL")!="") { t.Fatal("nonreading child never started") }
+    if mode=="missing" && statErr==nil { t.Fatal("missing executable ran") }
+   }
+   if got.PID!=0 && syscall.Kill(got.PID,0)!=syscall.ESRCH { t.Fatal("owned child still exists: "+strconv.Itoa(got.PID)) }
+   // A returned operation must not retain its writer or descriptor.
+   time.Sleep(30*time.Millisecond)
+   after,_:=os.ReadDir("/proc/self/fd")
+   if len(after)!=len(before) { t.Fatalf("descriptor leak: before=%d after=%d",len(before),len(after)) }
+   stack:=make([]byte,1<<20); n:=runtime.Stack(stack,true)
+   if strings.Contains(string(stack[:n]),".tokenPipe(") { t.Fatal("token writer remains") }
+  })
+ } }
+ if !t.Failed() { fmt.Println("TOKEN_TRANSPORT_OK") }
+}

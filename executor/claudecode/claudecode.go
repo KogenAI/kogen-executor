@@ -212,6 +212,10 @@ func (a *adapter) run(ctx context.Context, bin string, env []string, token strin
 }
 
 // tokenPipe returns the read end of a fresh pipe holding exactly token, its write end closed.
+// Limit the write to the POSIX minimum pipe capacity, so it cannot wait for a reader.
+// Larger tokens are refused before creating a transport or starting the child.
+const maxPipeTokenBytes = 512
+
 func tokenPipe(token string) (*os.File, error) {
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -233,6 +237,9 @@ func tokenPipe(token string) (*os.File, error) {
 func startWithToken(cmd *exec.Cmd, token string, start func() error) error {
 	if token == "" {
 		return start()
+	}
+	if len(token) > maxPipeTokenBytes {
+		return executor.Fail(executor.ReasonFailed, "stored token is too large for private delivery")
 	}
 	r, err := tokenPipe(token)
 	if err != nil {
