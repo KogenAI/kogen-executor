@@ -13,6 +13,14 @@ It is a component of [Kogen](https://github.com/KogenAI/kogen), which pins an ex
 - `thinking`: removal of stale thinking blocks from kept provider messages.
 - `testproc`: process isolation for tests with process-wide state.
 
+## Claude Code configuration
+
+Kogen uses `~/.kogen/claude-code/config` for its Claude Code configuration.
+A plain config directory is created or tightened to permissions `0700`. The config
+path may instead be a symlink to an existing directory; Kogen uses it without
+changing the target's permissions. You are responsible for securing the target
+and its contents appropriately.
+
 ## Testing
 
 Then run:

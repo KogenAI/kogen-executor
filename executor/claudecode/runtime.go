@@ -115,6 +115,15 @@ func (a *adapter) ensureRuntime(ctx context.Context) error {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return unavailable("cannot create " + dir + ": " + err.Error())
 		}
+		if dir != root {
+			info, err := os.Lstat(dir)
+			if err != nil {
+				return unavailable("cannot secure " + dir + ": " + err.Error())
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
+		}
 		if err := os.Chmod(dir, 0o700); err != nil {
 			return unavailable("cannot secure " + dir + ": " + err.Error())
 		}

@@ -348,3 +348,56 @@ func TestOlderVersionDirectoryIsUntouched(t *testing.T) {
 		t.Fatalf("older runtime changed: %q %v", b, err)
 	}
 }
+
+func TestConfigDirectoryPermissions(t *testing.T) {
+	for _, kind := range []string{"linked", "missing", "plain"} {
+		t.Run(kind, func(t *testing.T) {
+			home := t.TempDir()
+			if err := os.MkdirAll(RuntimeDir(home), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(RuntimePath(home), nil, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			config := ConfigDir(home)
+			target := config
+			if kind == "linked" {
+				target = filepath.Join(home, ".claude-bench")
+			}
+			if kind != "missing" {
+				if err := os.Mkdir(target, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(target, 0o775); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if kind == "linked" {
+				if err := os.Symlink(target, config); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := installer(home, nil).ensureRuntime(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			st, err := os.Stat(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := os.FileMode(0o700)
+			if kind == "linked" {
+				want = 0o775
+			}
+			if st.Mode().Perm() != want {
+				t.Errorf("mode = %o, want %o", st.Mode().Perm(), want)
+			}
+			link, err := os.Lstat(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := link.Mode()&os.ModeSymlink != 0; got != (kind == "linked") {
+				t.Errorf("symlink = %v", got)
+			}
+		})
+	}
+}
