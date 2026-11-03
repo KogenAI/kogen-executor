@@ -12,6 +12,7 @@ It is a component of [Kogen](https://github.com/KogenAI/kogen), which pins an ex
 - `agent`: the native Kogen Loop agent definitions: tools, prompts and budgets.
 - `thinking`: removal of stale thinking blocks from kept provider messages.
 - `testproc`: process isolation for tests with process-wide state.
+- `core`: what kogen-build and kogen-review share: the persisted Build state and the types it holds, the run record, the review contract (`Reviewer`, `Approved`, `RequestSpec`) and the services a Build provides to its review (`Host`).
 
 ## Claude Code configuration
 
