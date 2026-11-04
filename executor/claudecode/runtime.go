@@ -305,6 +305,9 @@ func (a *adapter) downloadBinary(ctx context.Context, source, file string, want 
 	if resp.StatusCode != http.StatusOK {
 		return "", resp.StatusCode == 429 || resp.StatusCode >= 500 && resp.StatusCode <= 599, fail("HTTP " + resp.Status)
 	}
+	if resp.ContentLength >= 0 && resp.ContentLength != want.size {
+		return "", false, fail(fmt.Sprintf("the response announces %d bytes, expected %d; nothing was installed", resp.ContentLength, want.size))
+	}
 	out, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o700)
 	if err != nil {
 		return "", false, unavailable("cannot create " + file + ": " + err.Error())
@@ -335,7 +338,13 @@ func (a *adapter) downloadBinary(ctx context.Context, source, file string, want 
 		return "", true, fail(copyErr.Error())
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
-	if n != want.size || digest != want.sha256 {
+	if n < want.size {
+		return "", false, unavailable(fmt.Sprintf("the downloaded Claude Code %s is shorter than its pinned size: received %d bytes, expected %d; nothing was installed", Version, n, want.size))
+	}
+	if n > want.size {
+		return "", false, unavailable(fmt.Sprintf("the downloaded Claude Code %s is longer than its pinned size: received %d bytes, expected %d; nothing was installed", Version, n, want.size))
+	}
+	if digest != want.sha256 {
 		return "", false, unavailable("the downloaded Claude Code " + Version + " does not match its pinned SHA-256; nothing was installed")
 	}
 	return digest, false, nil

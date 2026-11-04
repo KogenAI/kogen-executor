@@ -198,7 +198,7 @@ func TestInstallRefusals(t *testing.T) {
 		ran    bool
 	}{
 		{"digest mismatch", good, sum([]byte("other")), nil, "the downloaded Claude Code 2.1.312 does not match its pinned SHA-256; nothing was installed", false},
-		{"size mismatch", good, "", func(w http.ResponseWriter, r *http.Request, b []byte) { w.Write(append(append([]byte{}, b...), '#')) }, "the downloaded Claude Code 2.1.312 does not match its pinned SHA-256; nothing was installed", false},
+		{"size mismatch", good, "", func(w http.ResponseWriter, r *http.Request, b []byte) { w.Write(append(append([]byte{}, b...), '#')) }, fmt.Sprintf("cannot download Claude Code 2.1.312 from %%s/2.1.312/linux-x64/claude: the response announces %d bytes, expected %d; nothing was installed", len(good)+1, len(good)), false},
 		{"another version", script("2.1.314 (Claude Code)", log), "", nil, "the downloaded Claude Code reports 2.1.314 (Claude Code), not 2.1.312; nothing was installed", true},
 		{"not found", good, "", func(w http.ResponseWriter, r *http.Request, b []byte) { http.NotFound(w, r) }, "cannot download Claude Code 2.1.312 from %s/2.1.312/linux-x64/claude: HTTP 404 Not Found", false},
 		{"dropped connection", good, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
@@ -575,7 +575,7 @@ func TestDownloadRetryTimingAndFreshBody(t *testing.T) {
 			var logs bytes.Buffer
 			err := installer(home, &logs).ensureRuntime(context.Background())
 			if mismatch {
-				if err == nil || !strings.Contains(err.Error(), "does not match") {
+				if want := fmt.Sprintf("the response announces %d bytes, expected %d; nothing was installed", len(binary)/2, len(binary)); err == nil || !strings.Contains(err.Error(), want) {
 					t.Fatalf("%v", err)
 				}
 			} else {
