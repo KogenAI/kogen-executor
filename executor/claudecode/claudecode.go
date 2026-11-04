@@ -81,9 +81,10 @@ func New(opts Options) executor.Executor {
 }
 
 type adapter struct {
-	opts         Options
-	goos, goarch string
-	downloadIdle time.Duration
+	opts               Options
+	goos, goarch       string
+	downloadIdle       time.Duration
+	downloadRetryDelay time.Duration
 }
 
 // Describe reports the executor's capabilities and exact version. It never fails: an

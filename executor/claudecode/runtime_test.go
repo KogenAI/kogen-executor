@@ -251,7 +251,7 @@ func TestNextInstallRecoversAfterAFailure(t *testing.T) {
 	if err := installer(home, nil).ensureRuntime(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if s.downloads.Load() != 2 {
+	if s.downloads.Load() != 4 {
 		t.Fatalf("downloads %d", s.downloads.Load())
 	}
 	if _, err := os.Stat(RuntimePath(home)); err != nil {
@@ -549,5 +549,156 @@ func TestDownloadIdleProgressAndStall(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestDownloadRetryTimingAndFreshBody(t *testing.T) {
+	for _, mismatch := range []bool{false, true} {
+		t.Run(fmt.Sprint(mismatch), func(t *testing.T) {
+			binary := script(Version, filepath.Join(t.TempDir(), "runs"))
+			var times []time.Time
+			s := newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
+				times = append(times, time.Now())
+				if len(times) < 3 {
+					w.Header().Set("Content-Length", fmt.Sprint(len(b)))
+					w.Write(b[:len(b)/2])
+					w.(http.Flusher).Flush()
+					panic(http.ErrAbortHandler)
+				}
+				if mismatch {
+					w.Write(b[:len(b)/2])
+					return
+				}
+				w.Write(b)
+			})
+			home := t.TempDir()
+			var logs bytes.Buffer
+			err := installer(home, &logs).ensureRuntime(context.Background())
+			if mismatch {
+				if err == nil || !strings.Contains(err.Error(), "does not match") {
+					t.Fatalf("%v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, e := os.ReadFile(RuntimePath(home))
+				if e != nil || !bytes.Equal(got, binary) {
+					t.Fatalf("bytes %q: %v", got, e)
+				}
+			}
+			if s.downloads.Load() != 3 || len(times) != 3 || times[1].Sub(times[0]) < 90*time.Millisecond || times[2].Sub(times[1]) < 190*time.Millisecond || strings.Count(logs.String(), "retry") != 2 {
+				t.Fatalf("times %v logs %s", times, logs.String())
+			}
+		})
+	}
+}
+
+func TestRetryPauseHoldsLockAndCancels(t *testing.T) {
+	binary := script(Version, filepath.Join(t.TempDir(), "runs"))
+	hit := make(chan struct{}, 1)
+	s := newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
+		hit <- struct{}{}
+		http.Error(w, "unavailable", 503)
+	})
+	home := t.TempDir()
+	a := installer(home, nil)
+	a.setDownloadRetryDelayForTest(time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.ensureRuntime(ctx) }()
+	<-hit
+	lockCtx, lockCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer lockCancel()
+	lock, err := lockInstall(lockCtx, filepath.Join(Root(home), "install.lock"), io.Discard)
+	if err == nil {
+		lock.Close()
+		t.Fatal("lock released during pause")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		wantError(t, err, "executor/interrupted")
+	case <-time.After(time.Second):
+		t.Fatal("cancel did not interrupt pause")
+	}
+	lock, err = lockInstall(context.Background(), filepath.Join(Root(home), "install.lock"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock.Close()
+	if s.downloads.Load() != 1 {
+		t.Fatal(s.downloads.Load())
+	}
+}
+
+func TestDownloadTransportErrors(t *testing.T) {
+	for _, source := range []string{"http://127.0.0.1:1/claude", "http://nonexistent.invalid/claude"} {
+		t.Run(source, func(t *testing.T) {
+			// Bypass proxy configuration so the DNS and connection failures reach the client.
+			old := http.DefaultClient
+			http.DefaultClient = &http.Client{Transport: &http.Transport{Proxy: nil}}
+			defer func() { http.DefaultClient = old }()
+			_, retry, err := installer(t.TempDir(), nil).downloadBinary(context.Background(), source, filepath.Join(t.TempDir(), "claude"), pin{size: 1})
+			if err == nil || !retry {
+				t.Fatalf("retry %v: %v", retry, err)
+			}
+		})
+	}
+}
+
+func TestDownloadContextStopsWithoutRetry(t *testing.T) {
+	for _, phase := range []string{"before body", "during body", "pause"} {
+		for _, deadline := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s deadline=%v", phase, deadline), func(t *testing.T) {
+				binary := script(Version, filepath.Join(t.TempDir(), "runs"))
+				reached := make(chan struct{}, 1)
+				s := newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
+					if phase == "pause" {
+						reached <- struct{}{}
+						http.Error(w, "down", 503)
+						return
+					}
+					if phase == "during body" {
+						w.Header().Set("Content-Length", fmt.Sprint(len(b)))
+						w.WriteHeader(200)
+						w.Write(b[:1])
+						w.(http.Flusher).Flush()
+					}
+					reached <- struct{}{}
+					<-r.Context().Done()
+				})
+				home := t.TempDir()
+				a := installer(home, nil)
+				a.setDownloadRetryDelayForTest(time.Second)
+				var ctx context.Context
+				var cancel context.CancelFunc
+				if deadline {
+					ctx, cancel = context.WithTimeout(context.Background(), 200*time.Millisecond)
+				} else {
+					ctx, cancel = context.WithCancel(context.Background())
+				}
+				defer cancel()
+				done := make(chan error, 1)
+				go func() { done <- a.ensureRuntime(ctx) }()
+				<-reached
+				if !deadline {
+					cancel()
+				}
+				select {
+				case err := <-done:
+					reason := "executor/interrupted"
+					if deadline {
+						reason = "executor/deadline"
+					}
+					wantError(t, err, reason)
+				case <-time.After(2 * time.Second):
+					t.Fatal("context did not stop download")
+				}
+				if s.downloads.Load() != 1 {
+					t.Fatalf("requests %d", s.downloads.Load())
+				}
+			})
+		}
 	}
 }

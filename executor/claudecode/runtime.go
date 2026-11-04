@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // Version is the one Claude Code version Kogen runs. Kogen's binary carries it as the only
@@ -30,6 +31,10 @@ const Version = "2.1.312"
 const SeamEnv = "KOGEN_CLAUDE_CODE_URL"
 
 const downloadIdleTimeout = 30 * time.Second
+const downloadAttempts = 3
+const downloadRetryDelay = 100 * time.Millisecond
+
+func (a *adapter) setDownloadRetryDelayForTest(d time.Duration) { a.downloadRetryDelay = d }
 
 func (a *adapter) setDownloadIdleTimeoutForTest(d time.Duration) { a.downloadIdle = d }
 
@@ -223,45 +228,35 @@ func (a *adapter) install(ctx context.Context) error {
 		want.sha256, want.size = checksum, size
 	}
 	source := base + "/" + Version + "/" + want.platform + "/claude"
-	downloadCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	resp, err := a.get(downloadCtx, source)
-	if err != nil {
+	file := filepath.Join(partial, "claude")
+	var digest string
+	for attempt := 1; attempt <= downloadAttempts; attempt++ {
+		var retry bool
+		digest, retry, err = a.downloadBinary(ctx, source, file, want)
 		if ctx.Err() != nil {
 			return classify(ctx)
 		}
-		return err
-	}
-	defer resp.Body.Close()
-	idle := a.downloadIdle
-	if idle == 0 {
-		idle = downloadIdleTimeout
-	}
-	reader := newIdleReader(resp.Body, idle, cancel)
-	defer reader.stop()
-	file := filepath.Join(partial, "claude")
-	out, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o700)
-	if err != nil {
-		return unavailable("cannot create " + file + ": " + err.Error())
-	}
-	hash := sha256.New()
-	n, err := io.Copy(io.MultiWriter(out, hash), io.LimitReader(reader, want.size+1))
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	stalled := reader.stop()
-	if ctx.Err() != nil {
-		return classify(ctx)
-	}
-	if stalled {
-		return unavailable("cannot download Claude Code " + Version + " from " + source + ": connection stalled")
-	}
-	if err != nil {
-		return unavailable("cannot download Claude Code " + Version + " from " + source + ": " + err.Error())
-	}
-	digest := hex.EncodeToString(hash.Sum(nil))
-	if n != want.size || digest != want.sha256 {
-		return unavailable("the downloaded Claude Code " + Version + " does not match its pinned SHA-256; nothing was installed")
+		if err == nil {
+			break
+		}
+		if !retry {
+			return err
+		}
+		if attempt == downloadAttempts {
+			return unavailable(fmt.Sprintf("%s; %d attempts", err.(*sys.Error).Detail, downloadAttempts))
+		}
+		fmt.Fprintf(a.stderr(), "kogen: download attempt %d failed: %s; retry after pause\n", attempt, err)
+		delay := a.downloadRetryDelay
+		if delay == 0 {
+			delay = downloadRetryDelay
+		}
+		timer := time.NewTimer(time.Duration(attempt) * delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return classify(ctx)
+		case <-timer.C:
+		}
 	}
 	if err := os.Chmod(file, 0o755); err != nil {
 		return unavailable("cannot make " + file + " executable: " + err.Error())
@@ -284,6 +279,77 @@ func (a *adapter) install(ctx context.Context) error {
 	installed = true
 	fmt.Fprintf(a.stderr(), "kogen: installed Claude Code %s (sha256 %s)\n", Version, digest)
 	return nil
+}
+
+// downloadBinary performs one clean attempt. Only transport failures and transient
+// HTTP responses are retryable; local writes and completed pin mismatches are not.
+func (a *adapter) downloadBinary(ctx context.Context, source, file string, want pin) (string, bool, error) {
+	fail := func(detail string) error {
+		return unavailable("cannot download Claude Code " + Version + " from " + source + ": " + detail)
+	}
+	downloadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, source, nil)
+	if err != nil {
+		return "", false, fail(err.Error())
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return "", true, fail(err.Error())
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", resp.StatusCode == 429 || resp.StatusCode >= 500 && resp.StatusCode <= 599, fail("HTTP " + resp.Status)
+	}
+	out, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o700)
+	if err != nil {
+		return "", false, unavailable("cannot create " + file + ": " + err.Error())
+	}
+	idle := a.downloadIdle
+	if idle == 0 {
+		idle = downloadIdleTimeout
+	}
+	reader := newIdleReader(resp.Body, idle, cancel)
+	hash := sha256.New()
+	writer := &downloadWriter{w: io.MultiWriter(out, hash)}
+	n, copyErr := io.Copy(writer, io.LimitReader(reader, want.size+1))
+	stalled := reader.stop()
+	closeErr := out.Close()
+	if ctx.Err() != nil {
+		return "", false, classify(ctx)
+	}
+	if stalled {
+		return "", false, fail("connection stalled")
+	}
+	if writer.err != nil {
+		return "", false, fail(writer.err.Error())
+	}
+	if closeErr != nil {
+		return "", false, fail(closeErr.Error())
+	}
+	if copyErr != nil {
+		return "", true, fail(copyErr.Error())
+	}
+	digest := hex.EncodeToString(hash.Sum(nil))
+	if n != want.size || digest != want.sha256 {
+		return "", false, unavailable("the downloaded Claude Code " + Version + " does not match its pinned SHA-256; nothing was installed")
+	}
+	return digest, false, nil
+}
+
+type downloadWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (w *downloadWriter) Write(p []byte) (int, error) {
+	n, err := w.w.Write(p)
+	w.err = err
+	return n, err
 }
 
 // idleReader cancels the request when no body bytes arrive for an idle interval.
