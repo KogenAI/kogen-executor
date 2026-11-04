@@ -1,0 +1,5 @@
+'use strict';
+const assert=require('node:assert/strict');
+function stable(events){const e=structuredClone(events.filter(e=>e.event==='executor_started'));assert.equal(e.length,1);assert.match(e[0].session_id,/^[0-9a-f-]{36}$/);delete e[0].session_id;delete e[0].protected_dropped;delete e[0].protected_dropped_count;return e[0];}
+if(require.main===module){const a=[{event:'executor_started',session_id:'12345678-1234-1234-1234-123456789abc',role:'build'}];const b=structuredClone(a);b[0].protected_dropped_count=1;b[0].protected_dropped=[{entry:'',reason:'empty'}];if(process.argv[2]==='bad'){b[0].role='shape';assert.throws(()=>assert.deepEqual(stable(a),stable(b)));console.log('event observer bad rejected');process.exitCode=1;}else{assert.deepEqual(stable(a),stable(b));console.log('event observer good');}}
+else{const{Then}=require('@cucumber/cucumber');Then('k-exec-protected-paths-dropped-visible: remember the unchanged start fields',function(){this.pvStart=stable(this.pv.events);});Then('k-exec-protected-paths-dropped-visible: only dropped metadata differs from the remembered start',function(){assert.deepEqual(stable(this.pv.events),this.pvStart);});}

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/KogenAI/kogen-executor/executor"
 )
@@ -318,6 +319,10 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
 		return nil, executor.Fail(executor.ReasonUnavailable, "the checkout "+t.Root+" is not a directory")
 	}
+	protected, dropped, count, fatal := classifyProtected(root, t.Protected)
+	if fatal != nil {
+		return nil, executor.Fail(executor.ReasonUnavailable, "protected path root_or_parent: "+fatal.Entry)
+	}
 	if t.Dir == "" {
 		return nil, executor.Fail(executor.ReasonUnavailable, "no executor artifact directory was given")
 	}
@@ -337,7 +342,7 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 	if err != nil {
 		return nil, executor.Fail(executor.ReasonFailed, "no randomness for the session id: "+err.Error())
 	}
-	pol := policy{Root: root, Protected: cleanProtected(root, t.Protected), Log: filepath.Join(dir, "hook-log.jsonl"), Nonce: nonce, ReadOnly: t.Role == executor.RoleShape}
+	pol := policy{Root: root, Protected: protected, Log: filepath.Join(dir, "hook-log.jsonl"), Nonce: nonce, ReadOnly: t.Role == executor.RoleShape}
 	policyPath := filepath.Join(dir, "hook-policy.json")
 	settingsPath := filepath.Join(dir, "claude-settings.json")
 	if err := writePrivate(policyPath, mustJSON(pol)); err != nil {
@@ -355,7 +360,7 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 		sessionID: sessionID, version: version, settingsPath: settingsPath, pol: pol,
 		role: t.Role, schema: schema,
 	}
-	emit(map[string]any{
+	started := map[string]any{
 		"event":               "executor_started",
 		"executor":            executor.ClaudeCode,
 		"contract":            executor.Contract,
@@ -372,7 +377,12 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 			"logged_in": auth.LoggedIn, "auth_method": auth.AuthMethod,
 			"api_provider": auth.APIProvider, "subscription_type": auth.SubscriptionType,
 		},
-	})
+	}
+	if count > 0 {
+		started["protected_dropped_count"] = count
+		started["protected_dropped"] = dropped
+	}
+	emit(started)
 	return s, nil
 }
 
@@ -432,24 +442,63 @@ func hookSettings(hookCmd []string, policyPath string) map[string]any {
 	}}
 }
 
-// cleanProtected keeps the usable repository-relative protected paths (slash form).
-func cleanProtected(root string, paths []string) []string {
-	var out []string
-	for _, p := range paths {
-		p = filepath.Clean(filepath.FromSlash(strings.TrimSpace(p)))
-		if filepath.IsAbs(p) {
-			rel, err := filepath.Rel(root, p)
-			if err != nil {
-				continue
+type protectedDrop struct {
+	Entry  string `json:"entry"`
+	Reason string `json:"reason"`
+}
+
+// classifyProtected retains usable paths and reports ignored inputs in their original order.
+func classifyProtected(root string, paths []string) (out []string, dropped []protectedDrop, count uint64, fatal *protectedDrop) {
+	for _, original := range paths {
+		p := strings.TrimSpace(original)
+		reason := ""
+		if p == "" {
+			reason = "empty"
+		} else {
+			p = filepath.Clean(filepath.FromSlash(p))
+			if filepath.IsAbs(p) {
+				rel, err := filepath.Rel(root, p)
+				if err != nil {
+					reason = "outside_checkout"
+				} else {
+					p = rel
+				}
 			}
-			p = rel
+			if reason == "" {
+				if p == "." {
+					reason = "root_or_parent"
+				} else if p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
+					reason = "root_or_parent"
+					for _, component := range strings.Split(p, string(filepath.Separator)) {
+						if component != ".." {
+							reason = "outside_checkout"
+							break
+						}
+					}
+				}
+			}
 		}
-		if p == "." || p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
+		if reason == "" {
+			out = append(out, filepath.ToSlash(p))
 			continue
 		}
-		out = append(out, filepath.ToSlash(p))
+		entry := original
+		if len(entry) > 256 {
+			entry = entry[:256]
+			for !utf8.ValidString(entry) {
+				entry = entry[:len(entry)-1]
+			}
+		}
+		drop := protectedDrop{Entry: entry, Reason: reason}
+		if reason == "root_or_parent" {
+			return out, dropped, count, &drop
+		}
+		count++
+		if len(dropped) < 20 {
+			dropped = append(dropped, drop)
+		}
 	}
-	return out
+	return out, dropped, count, nil
 }
 
 func writePrivate(path string, data []byte) error {

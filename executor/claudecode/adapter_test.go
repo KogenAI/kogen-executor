@@ -1057,7 +1057,7 @@ func TestCloseRefusesRounds(t *testing.T) {
 
 func TestCleanProtected(t *testing.T) {
 	t.Parallel()
-	got := cleanProtected("/r", []string{"a/b.txt", " ./c ", "/r/d/e", "../x", "..", ".", "", "/elsewhere/f"})
+	got, _, _, _ := classifyProtected("/r", []string{"a/b.txt", " ./c ", "/r/d/e", "../x", "", "/elsewhere/f"})
 	if !reflect.DeepEqual(got, []string{"a/b.txt", "c", "d/e"}) {
 		t.Fatalf("got %q", got)
 	}
