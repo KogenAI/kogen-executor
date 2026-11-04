@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -599,6 +600,7 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 		"session_id": s.sessionID, "model": r.model, "claude_code_version": r.ccVersion,
 		"terminal_reason": terminal, "deadline_remaining_ms": r.deadlineRemaining, "compactions": r.compactions,
 	}
+	addModelUsage(event, res)
 	r.addDenials(event)
 	r.addRateLimit(event)
 	r.addProfile(event)
@@ -659,6 +661,7 @@ func (r *roundRun) addResult(event map[string]any) {
 	if res == nil {
 		return
 	}
+	addModelUsage(event, res)
 	r.addDenials(event)
 	_, hasUsage := res["usage"].(map[string]any)
 	_, hasCost := res["total_cost_usd"].(json.Number)
@@ -674,6 +677,61 @@ func (r *roundRun) addResult(event map[string]any) {
 			event[k] = v
 		}
 	}
+}
+
+// addModelUsage observes the result breakdown without changing aggregate accounting.
+func addModelUsage(event, res map[string]any) {
+	breakdown, ok := res["modelUsage"].(map[string]any)
+	if !ok {
+		return
+	}
+	var ids []string
+	for id, value := range breakdown {
+		if _, ok := value.(map[string]any); ok {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	sort.Strings(ids)
+	entries := make([]map[string]any, 0, min(len(ids), 20))
+	for _, id := range ids[:min(len(ids), 20)] {
+		entry := map[string]any{"model": boundBytes(id, 256)}
+		fields := breakdown[id].(map[string]any)
+		for _, pair := range [][2]string{{"inputTokens", "input"}, {"cacheReadInputTokens", "cached"}, {"outputTokens", "output"}, {"costUSD", "cost_usd"}} {
+			if nonnegativeJSONNumber(fields[pair[0]]) {
+				entry[pair[1]] = fields[pair[0]]
+			}
+		}
+		entries = append(entries, entry)
+	}
+	event["model_usage"] = entries
+	if len(ids) > 20 {
+		event["model_usage_omitted"] = len(ids) - 20
+	}
+}
+
+// nonnegativeJSONNumber checks the decoded JSON number without float64 overflow or
+// underflow changing its validity or sign.
+func nonnegativeJSONNumber(v any) bool {
+	n, ok := v.(json.Number)
+	if !ok {
+		return false
+	}
+	s := string(n)
+	if !strings.HasPrefix(s, "-") {
+		return true
+	}
+	for _, c := range s[1:] {
+		if c == 'e' || c == 'E' {
+			break
+		}
+		if c >= '1' && c <= '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // addDenials projects the already redacted result into bounded terminal telemetry.
