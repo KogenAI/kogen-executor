@@ -47,6 +47,7 @@ type session struct {
 	promptLen int // bytes of the round's prompt, for a refusal's report
 	failed    bool
 	prevCost  float64
+	costGap   bool
 	model     string
 
 	closed atomic.Bool

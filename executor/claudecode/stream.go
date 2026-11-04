@@ -618,11 +618,12 @@ func (s *session) mapUsage(res map[string]any, model string) executor.Usage {
 	if ok {
 		s.prevCost = total
 	}
+	s.costGap = !ok
 	return u
 }
 
 // usageOf is mapUsage without advancing the session's cost baseline: it also returns the
-// result's cumulative total and whether that total became the CostUSD delta.
+// result's cumulative total and whether it is usable.
 func (s *session) usageOf(res map[string]any, model string) (u executor.Usage, cumulative float64, advanced bool) {
 	u = executor.Usage{State: executor.UsageUnknown, Source: executor.UsageHarness, Model: model}
 	if usage, ok := res["usage"].(map[string]any); ok {
@@ -639,9 +640,11 @@ func (s *session) usageOf(res map[string]any, model string) (u executor.Usage, c
 	case u.Input != nil || u.Cached != nil || u.Output != nil:
 		u.State = executor.UsagePartial
 	}
-	if total, ok := number(res["total_cost_usd"]); ok && total >= s.prevCost {
-		d := math.Round((total-s.prevCost)*1e9) / 1e9
-		u.CostUSD = &d
+	if total, ok := number(res["total_cost_usd"]); ok {
+		if !s.costGap && total >= s.prevCost {
+			d := math.Round((total-s.prevCost)*1e9) / 1e9
+			u.CostUSD = &d
+		}
 		return u, total, true
 	}
 	return u, 0, false

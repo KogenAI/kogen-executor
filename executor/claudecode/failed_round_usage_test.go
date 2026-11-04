@@ -120,3 +120,41 @@ func TestFailedAuthRoundReportsUsage(t *testing.T) {
 		t.Fatalf("usage %v", usage)
 	}
 }
+
+func TestFailedRoundPreservesCostGapAndBaseline(t *testing.T) {
+	s := &session{}
+	check := func(total string, failed bool, want any) {
+		t.Helper()
+		res := map[string]any{"usage": map[string]any{"output_tokens": json.Number("4")}}
+		if total != "" {
+			res["total_cost_usd"] = json.Number(total)
+		}
+		var got any
+		if failed {
+			ev := map[string]any{}
+			(&roundRun{s: s, model: "m", result: res}).addResult(ev)
+			usage := ev["usage"].(map[string]any)
+			got = usage["cost_usd"]
+			if usage["state"] != executor.UsagePartial || usage["output"] != 4 {
+				t.Fatalf("failed usage %v", usage)
+			}
+		} else {
+			u := s.mapUsage(res, "m")
+			if u.CostUSD != nil {
+				got = *u.CostUSD
+			}
+		}
+		if got != want {
+			t.Fatalf("total %q failed %v: cost %v, want %v", total, failed, got, want)
+		}
+	}
+	check("0.10", false, 0.1)
+	check("0.25", true, 0.15)
+	check("0.40", false, 0.3)
+	check("", true, nil)
+	check("0.55", false, 0.15)
+	check("", false, nil)
+	check("0.70", true, nil)
+	check("0.80", false, nil)
+	check("0.95", false, 0.15)
+}
