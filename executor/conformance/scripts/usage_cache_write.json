@@ -1,0 +1,1 @@
+{"name":"usage_cache_write","only":"claude-code","needs":[],"rounds":[{"actions":[],"end":"finish","claim":"done","usage":{"input":1010,"cached":700,"output":5},"cache_write":300}],"expect":{"rounds":[{"ending":"finish","usage_state":"complete","cache_write":300}],"protected":"unchanged"}}

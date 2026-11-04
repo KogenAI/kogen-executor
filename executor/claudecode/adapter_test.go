@@ -1458,3 +1458,31 @@ func TestBenignTailPreservesStructuredSubmission(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageCacheWriteMapping(t *testing.T) {
+	t.Parallel()
+	intPtr := func(n int) *int { return &n }
+	cases := []struct {
+		name, usage, state           string
+		input, cached, write, output *int
+	}{
+		{"complete", `{"input_tokens":10,"cache_read_input_tokens":700,"cache_creation_input_tokens":300,"output_tokens":5}`, executor.UsageComplete, intPtr(1010), intPtr(700), intPtr(300), intPtr(5)},
+		{"missing reads", `{"input_tokens":10,"cache_creation_input_tokens":300,"output_tokens":5}`, executor.UsagePartial, nil, nil, intPtr(300), intPtr(5)},
+		{"creation only", `{"cache_creation_input_tokens":300}`, executor.UsagePartial, nil, nil, intPtr(300), nil},
+		{"zero", `{"cache_creation_input_tokens":0}`, executor.UsagePartial, nil, nil, intPtr(0), nil},
+		{"absent", `{}`, executor.UsageUnknown, nil, nil, nil, nil},
+		{"invalid", `{"cache_creation_input_tokens":-1}`, executor.UsageUnknown, nil, nil, nil, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res, err := decodeObject([]byte(`{"usage":` + c.usage + `}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := (&session{}).mapUsage(res, "m")
+			if got.State != c.state || !reflect.DeepEqual(got.Input, c.input) || !reflect.DeepEqual(got.Cached, c.cached) || !reflect.DeepEqual(got.CacheWrite, c.write) || !reflect.DeepEqual(got.Output, c.output) {
+				t.Fatalf("usage %+v, want %+v", got, c)
+			}
+		})
+	}
+}

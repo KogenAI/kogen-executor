@@ -34,6 +34,12 @@ func jsonOf(v any) string {
 	return string(b)
 }
 
+func normalizedJSON(s string) string {
+	var v any
+	_ = json.Unmarshal([]byte(s), &v)
+	return jsonOf(v)
+}
+
 func TestFailedRoundReportsResult(t *testing.T) {
 	h := newHarness(t, fakeConfig{Script: oneRound(finishRound), Result: map[string]any{
 		"subtype": "error_during_execution", "is_error": true, "terminal_reason": "api_error", "num_turns": 7,
@@ -43,8 +49,8 @@ func TestFailedRoundReportsResult(t *testing.T) {
 	_, err := s.Round(context.Background(), executor.Input{})
 	wantError(t, err, "executor/failed")
 	ev := failedEvent(t, h)
-	want := `{"cached":20,"cost_usd":0.25,"input":35,"model":"claude-sonnet-5-5","output":7,"reasoning":null,"source":"harness","state":"complete"}`
-	if got := jsonOf(ev["usage"]); got != want {
+	want := `{"cached":20,"cache_write":5,"cost_usd":0.25,"input":35,"model":"claude-sonnet-5-5","output":7,"reasoning":null,"source":"harness","state":"complete"}`
+	if got := jsonOf(ev["usage"]); got != normalizedJSON(want) {
 		t.Fatalf("usage %s, want %s", got, want)
 	}
 	if ev["num_turns"] != 7 || ev["subtype"] != "error_during_execution" || ev["terminal_reason"] != "api_error" || ev["reason"] != "failed" {
@@ -71,8 +77,8 @@ func TestFailedRoundOmitsUnreported(t *testing.T) {
 	s = h.startOK()
 	_, err = s.Round(context.Background(), executor.Input{})
 	wantError(t, err, "executor/failed")
-	want := `{"cached":null,"cost_usd":null,"input":null,"model":"claude-sonnet-5-5","output":7,"reasoning":null,"source":"harness","state":"partial"}`
-	if got := jsonOf(failedEvent(t, h)["usage"]); got != want {
+	want := `{"cached":null,"cache_write":null,"cost_usd":null,"input":null,"model":"claude-sonnet-5-5","output":7,"reasoning":null,"source":"harness","state":"partial"}`
+	if got := jsonOf(failedEvent(t, h)["usage"]); got != normalizedJSON(want) {
 		t.Fatalf("usage %s, want %s", got, want)
 	}
 }
@@ -120,8 +126,8 @@ func TestFailedAuthRoundReportsUsage(t *testing.T) {
 			if ev["reason"] != "auth_refused" || ev["num_turns"] != 1 || ev["subtype"] != "success" || ev["terminal_reason"] != "api_error" {
 				t.Fatalf("event %v", ev)
 			}
-			want := `{"cached":20,"cost_usd":0.5,"input":35,"model":"claude-sonnet-5-5","output":7,"reasoning":null,"source":"harness","state":"complete"}`
-			if got := jsonOf(ev["usage"]); got != want {
+			want := `{"cached":20,"cache_write":5,"cost_usd":0.5,"input":35,"model":"claude-sonnet-5-5","output":7,"reasoning":null,"source":"harness","state":"complete"}`
+			if got := jsonOf(ev["usage"]); got != normalizedJSON(want) {
 				t.Fatalf("usage %s, want %s", got, want)
 			}
 		})

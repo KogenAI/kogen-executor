@@ -15,3 +15,15 @@ An error result reporting Claude Code provider overload or temporary unavailabil
 bounded, redacted detail identifies the provider diagnostic and is also reported in
 `executor_round_failed`. The session remains failed, cannot continue, and offers no
 exact resume; the adapter does not retry or switch routes.
+
+## Round usage
+
+`Usage` reports nullable token counts as `input`, `cached`, `cache_write`,
+`output`, and `reasoning`; unreported counts are JSON null, including
+`cache_write`. Cache writes are optional and are not required for complete usage
+from every executor. Claude Code maps `cached` to cache reads and `cache_write`
+to cache creation independently. Its `input` is the sum of fresh input, cache
+reads and cache creation only when all three are reported. A creation-only
+report is partial; no reported counts means unknown. An explicit zero remains
+zero. Successful and failed terminal events include these counts when they
+include usage. Cost remains the harness estimate, not a bill.

@@ -65,6 +65,8 @@ type RoundScript struct {
 	Claim string `json:"claim"`
 	// Usage is reported usage; nil means the backend reports none.
 	Usage *ScriptUsage `json:"usage"`
+	// CacheWrite specifies cache creation for Claude Code-specific fixtures.
+	CacheWrite *int `json:"cache_write,omitempty"`
 	// Structured is the final result's structured_output (claude-code Shape and Review only).
 	// Absent: the backend reports none.
 	Structured json.RawMessage `json:"structured,omitempty"`
@@ -122,6 +124,7 @@ type Expect struct {
 type ExpectRound struct {
 	Ending     executor.Ending `json:"ending"`
 	UsageState string          `json:"usage_state"`
+	CacheWrite *int            `json:"cache_write,omitempty"`
 	// Structured is the exact (semantically compared) structured submission expected.
 	Structured json.RawMessage `json:"structured,omitempty"`
 }
@@ -252,6 +255,9 @@ func runScript(t *testing.T, d Driver, s Script) {
 		}
 		if want.UsageState != "" && got.Usage.State != want.UsageState {
 			t.Errorf("round %d usage state %q, want %q", i+1, got.Usage.State, want.UsageState)
+		}
+		if want.CacheWrite != nil && (got.Usage.CacheWrite == nil || *got.Usage.CacheWrite != *want.CacheWrite) {
+			t.Errorf("round %d cache write %v, want %d", i+1, got.Usage.CacheWrite, *want.CacheWrite)
 		}
 		if got.Usage.State == executor.UsageUnknown && (got.Usage.Input != nil || got.Usage.Output != nil) {
 			t.Errorf("round %d: unknown usage carries numbers", i+1)

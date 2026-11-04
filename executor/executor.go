@@ -178,14 +178,15 @@ type BlockerClaim struct {
 // Usage of one round. Nil fields were not reported. CostUSD is a harness's own estimate,
 // never a bill.
 type Usage struct {
-	Input     *int     `json:"input"`
-	Cached    *int     `json:"cached"`
-	Output    *int     `json:"output"`
-	Reasoning *int     `json:"reasoning"`
-	State     string   `json:"state"`
-	Source    string   `json:"source"`
-	CostUSD   *float64 `json:"cost_usd,omitempty"`
-	Model     string   `json:"model,omitempty"` // model the harness reported using
+	Input      *int     `json:"input"`
+	Cached     *int     `json:"cached"`
+	CacheWrite *int     `json:"cache_write"`
+	Output     *int     `json:"output"`
+	Reasoning  *int     `json:"reasoning"`
+	State      string   `json:"state"`
+	Source     string   `json:"source"`
+	CostUSD    *float64 `json:"cost_usd,omitempty"`
+	Model      string   `json:"model,omitempty"` // model the harness reported using
 }
 
 // Handle identifies a session for the run log and checkpoint.

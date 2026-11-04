@@ -359,9 +359,13 @@ func fakeClaude(cfgPath string, args []string) int {
 		res["structured_output"] = v
 	}
 	if rs.Usage != nil {
+		write := 0
+		if rs.CacheWrite != nil {
+			write = *rs.CacheWrite
+		}
 		res["usage"] = map[string]any{
-			"input_tokens": rs.Usage.Input - rs.Usage.Cached, "cache_read_input_tokens": rs.Usage.Cached,
-			"cache_creation_input_tokens": 0, "output_tokens": rs.Usage.Output,
+			"input_tokens": rs.Usage.Input - rs.Usage.Cached - write, "cache_read_input_tokens": rs.Usage.Cached,
+			"cache_creation_input_tokens": write, "output_tokens": rs.Usage.Output,
 		}
 		cost := 0.0
 		if cb, err := os.ReadFile(filepath.Join(cfg.State, "cost")); err == nil {

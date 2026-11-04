@@ -611,8 +611,8 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 // mapUsage maps the result's per-invocation usage the way Kogen maps Anthropic usage
 // (provider.anthropicUsage): Input = input_tokens + cache_read_input_tokens +
 // cache_creation_input_tokens, only when all three are reported; Cached = cache reads;
-// Output = output_tokens; Reasoning is not reported (nil). State is complete when Input,
-// Cached and Output are all known, unknown when none is, otherwise partial (unknown fields stay
+// CacheWrite = cache creation; Output = output_tokens; Reasoning is not reported (nil). State is complete when Input,
+// Cached and Output are all known, unknown when no counts are known, otherwise partial (unknown fields stay
 // nil, never zero). CostUSD is the delta of the cumulative total_cost_usd since the previous
 // round of this session: Claude Code's API-equivalent estimate, not a bill.
 func (s *session) mapUsage(res map[string]any, model string) executor.Usage {
@@ -630,7 +630,7 @@ func (s *session) usageOf(res map[string]any, model string) (u executor.Usage, c
 	u = executor.Usage{State: executor.UsageUnknown, Source: executor.UsageHarness, Model: model}
 	if usage, ok := res["usage"].(map[string]any); ok {
 		in, cr, cw := countPtr(usage["input_tokens"]), countPtr(usage["cache_read_input_tokens"]), countPtr(usage["cache_creation_input_tokens"])
-		u.Cached, u.Output = cr, countPtr(usage["output_tokens"])
+		u.Cached, u.CacheWrite, u.Output = cr, cw, countPtr(usage["output_tokens"])
 		if in != nil && cr != nil && cw != nil {
 			total := *in + *cr + *cw
 			u.Input = &total
@@ -639,7 +639,7 @@ func (s *session) usageOf(res map[string]any, model string) (u executor.Usage, c
 	switch {
 	case u.Input != nil && u.Cached != nil && u.Output != nil:
 		u.State = executor.UsageComplete
-	case u.Input != nil || u.Cached != nil || u.Output != nil:
+	case u.Input != nil || u.Cached != nil || u.CacheWrite != nil || u.Output != nil:
 		u.State = executor.UsagePartial
 	}
 	if total, ok := number(res["total_cost_usd"]); ok {
@@ -769,8 +769,8 @@ func (r *roundRun) addDenials(event map[string]any) {
 }
 
 func usageEvent(u executor.Usage) map[string]any {
-	m := map[string]any{"state": u.State, "source": u.Source, "input": nil, "cached": nil, "output": nil, "reasoning": nil, "cost_usd": nil, "model": u.Model}
-	for k, p := range map[string]*int{"input": u.Input, "cached": u.Cached, "output": u.Output, "reasoning": u.Reasoning} {
+	m := map[string]any{"state": u.State, "source": u.Source, "input": nil, "cached": nil, "cache_write": nil, "output": nil, "reasoning": nil, "cost_usd": nil, "model": u.Model}
+	for k, p := range map[string]*int{"input": u.Input, "cached": u.Cached, "cache_write": u.CacheWrite, "output": u.Output, "reasoning": u.Reasoning} {
 		if p != nil {
 			m[k] = *p
 		}

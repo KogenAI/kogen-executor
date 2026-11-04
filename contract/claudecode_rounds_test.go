@@ -133,7 +133,7 @@ func TestStructuredSubmission(t *testing.T) {
 func TestUsageMapping(t *testing.T) {
 	t.Parallel()
 	r, err := startFake(t, executor.RoleBuild, [][]string{{resultLine(map[string]any{"usage": map[string]any{
-		"input_tokens": 10, "cache_read_input_tokens": 20, "cache_creation_input_tokens": 5, "output_tokens": 7,
+		"input_tokens": 10, "cache_read_input_tokens": 700, "cache_creation_input_tokens": 300, "output_tokens": 5,
 	}})}})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -149,7 +149,7 @@ func TestUsageMapping(t *testing.T) {
 	for name, c := range map[string]struct {
 		got  *int
 		want int
-	}{"Input = input + cache_read + cache_creation": {u.Input, 35}, "Cached = cache_read": {u.Cached, 20}, "Output = output_tokens": {u.Output, 7}} {
+	}{"Input = input + cache_read + cache_creation": {u.Input, 1010}, "Cached = cache_read": {u.Cached, 700}, "CacheWrite = cache_creation": {u.CacheWrite, 300}, "Output = output_tokens": {u.Output, 5}} {
 		if c.got == nil {
 			t.Errorf("Usage %s is nil %s", name, src)
 			continue
