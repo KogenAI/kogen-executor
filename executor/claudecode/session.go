@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -120,6 +121,7 @@ func (s *session) Round(ctx context.Context, in executor.Input) (executor.RoundR
 		rr.addResult(event)
 		rr.addRateLimit(event)
 		rr.addProfile(event)
+		rr.addPersistence(event)
 		s.emit(event)
 		return executor.RoundResult{}, err
 	}
@@ -190,26 +192,49 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 		return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "cannot write the round stderr: "+err.Error())
 	}
 	defer errf.Close()
-	// With a stored token stderr goes through a streaming replacer, so the token is never on disk.
-	var errw *redactWriter
-	var errRead *os.File
-	var errCopied chan struct{}
-	var stderr io.Writer = errf
-	if tok := s.a.opts.Token; tok != "" {
-		er, ew, perr := os.Pipe()
-		if perr != nil {
-			return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "cannot create a pipe: "+perr.Error())
-		}
-		errRead, stderr = er, ew
-		errw = newRedactWriter(errf, tok, redactMark)
-		errCopied = make(chan struct{})
-		defer er.Close()
-		defer ew.Close()
-		go func() {
-			defer close(errCopied)
-			copyRedacted(errw, er)
-		}()
+	// Drain stderr through a bounded writer after streaming redaction.
+	er, ew, perr := os.Pipe()
+	if perr != nil {
+		return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "cannot create a pipe: "+perr.Error())
 	}
+	defer er.Close()
+	defer ew.Close()
+	stderr := ew
+	capped := &stderrPersistence{w: errf, cap: s.a.opts.StderrPersistBytes}
+	var errw *redactWriter
+	var target io.Writer = capped
+	if tok := s.a.opts.Token; tok != "" {
+		errw = newRedactWriter(capped, tok, redactMark)
+		target = errw
+	}
+	errCopied := make(chan struct{})
+	go func() { defer close(errCopied); copyRedacted(target, er) }()
+	var streamKept int64
+	finalized := false
+	finalize := func() {
+		if finalized {
+			return
+		}
+		finalized = true
+		ew.Close()
+		select {
+		case <-errCopied:
+		case <-time.After(groupDrain):
+			er.Close()
+			<-errCopied
+		}
+		if errw != nil {
+			errw.Flush()
+		}
+		rr.stderrLostBytes = capped.lost
+		if capped.lost > 0 {
+			fmt.Fprintf(errf, "\n[kogen: stderr persistence stopped at cap_bytes=%d; unpersisted_bytes=%d]\n", capped.cap, capped.lost)
+		}
+		if rr.streamLostLines > 0 {
+			fmt.Fprintf(raw, "{\"type\":\"kogen_persistence_truncated\",\"cap_bytes\":%d,\"unpersisted_lines\":%d,\"unpersisted_bytes\":%d}\n", s.a.opts.StreamPersistBytes, rr.streamLostLines, rr.streamLostBytes)
+		}
+	}
+	defer finalize()
 
 	args := roleRoundArgs(s.a.opts, s.role, s.schema, s.sessionID, n, s.task.Model, s.task.Effort, s.settingsPath, s.a.opts.MaxTurns)
 	cmd := exec.Command(s.bin, args...)
@@ -238,9 +263,7 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 	rr.procStarted = time.Now()
 	pw.Close()
 	sr.Close()
-	if errw != nil {
-		stderr.(*os.File).Close() // the child holds the only write end now
-	}
+	stderr.Close() // the child holds the only write end now
 	// The writer runs on its own goroutine so a full pipe can never block reading stdout. Round
 	// closes sw and waits for it before returning, so it cannot outlive the round.
 	writeErr := make(chan error, 1)
@@ -335,7 +358,15 @@ loop:
 			// Whole lines are redacted before they are persisted or parsed, so the token is
 			// caught however the pipe chunked it and never reaches events or the claim.
 			line := []byte(s.a.redact(string(m.line)))
-			raw.Write(append(append([]byte{}, line...), '\n'))
+			size := int64(len(line)) + 1
+			if rr.streamLostLines > 0 || size > s.a.opts.StreamPersistBytes-streamKept {
+				rr.streamLostLines++
+				rr.streamLostBytes += size
+			} else {
+				raw.Write(line)
+				raw.Write([]byte{'\n'})
+				streamKept += size
+			}
 			if err := rr.lineReceived(line, m.line); err != nil {
 				return fail(err)
 			}
@@ -387,15 +418,7 @@ loop:
 	} else if waitErr != nil {
 		exit = -1
 	}
-	if errw != nil {
-		select { // the copy ends when every holder of the write end is gone
-		case <-errCopied:
-		case <-time.After(groupDrain):
-			errRead.Close()
-			<-errCopied
-		}
-		errw.Flush()
-	}
+	finalize()
 	result, err := rr.finish(exit, killed, errPath)
 	if e, ok := sys.AsError(err); ok && e.Class == "executor" && e.Reason == executor.ReasonUsageLimit && groupAlive(pgid) {
 		return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "Claude Code process group did not exit; continuation is unsafe")

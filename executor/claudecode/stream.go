@@ -25,6 +25,8 @@ var guardedTools = map[string]bool{"Write": true, "Edit": true, "MultiEdit": tru
 
 // roundRun is the state of one round's event stream.
 type roundRun struct {
+	streamLostBytes, streamLostLines, stderrLostBytes int64
+
 	s                 *session
 	n                 int
 	deadlineRemaining any
@@ -604,6 +606,7 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 	r.addDenials(event)
 	r.addRateLimit(event)
 	r.addProfile(event)
+	r.addPersistence(event)
 	s.emit(event)
 	return out, nil
 }

@@ -1,0 +1,12 @@
+{
+  "None": false,
+  "Path": ".kogen/models/k-exec-round-files-bounded/model.qnt",
+  "Invariants": [
+    "Bounded",
+    "Accounted",
+    "Truncated"
+  ],
+  "Seed": "7",
+  "Samples": "50",
+  "Steps": "20"
+}

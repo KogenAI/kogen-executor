@@ -27,3 +27,25 @@ reads and cache creation only when all three are reported. A creation-only
 report is partial; no reported counts means unknown. An explicit zero remains
 zero. Successful and failed terminal events include these counts when they
 include usage. Cost remains the harness estimate, not a bill.
+
+### Claude Code round artifact persistence
+
+Each round independently limits redacted payload persisted to `round-N.jsonl` and
+`round-N.stderr`. `Options.StreamPersistBytes` and `Options.StderrPersistBytes`
+select byte caps; nonpositive values use 64 MiB (67108864) and 8 MiB (8388608)
+respectively. These are observation limits, not execution limits. Stream lines
+include their appended newline and are kept whole until the first overflow;
+subsequent lines are counted but not saved. Stderr keeps its redacted byte prefix
+and continues draining. An overflow appends one marker outside the payload cap:
+
+```
+{"type":"kogen_persistence_truncated","cap_bytes":4096,"unpersisted_lines":N,"unpersisted_bytes":B}
+
+[kogen: stderr persistence stopped at cap_bytes=4096; unpersisted_bytes=B]
+```
+
+The stderr marker includes the leading separator newline. On either terminal
+`executor_round_ended` or `executor_round_failed` event, overflow adds
+`stream_persist_truncated: true` and `stream_persist_unpersisted_bytes`, or
+`stderr_persist_truncated: true` and `stderr_persist_unpersisted_bytes`, for
+the affected file only. Under the cap these fields and markers are absent.

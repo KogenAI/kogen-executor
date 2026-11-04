@@ -35,6 +35,16 @@ type Options struct {
 	// HookCommand is the Kogen binary and hidden subcommand that run the hooks, e.g.
 	// [os.Executable(), HookSubcommand]. Required for prevention; Start refuses without it.
 	HookCommand []string
+	// StreamPersistBytes caps redacted stream payload per round; <=0 defaults to 64 MiB.
+	// Overflow adds a kogen_persistence_truncated JSON marker with cap_bytes,
+	// unpersisted_lines and unpersisted_bytes. Terminal events report
+	// stream_persist_truncated and stream_persist_unpersisted_bytes only on overflow.
+	StreamPersistBytes int64
+	// StderrPersistBytes caps redacted stderr per round; <=0 defaults to 8 MiB.
+	// Overflow adds a [kogen: stderr persistence stopped at cap_bytes=...;
+	// unpersisted_bytes=...] marker. Terminal events report stderr_persist_truncated
+	// and stderr_persist_unpersisted_bytes only on overflow.
+	StderrPersistBytes int64
 	// MaxTurns is Claude Code's per-round turn limit (default 150).
 	MaxTurns int
 	// Env is the base environment of the child (default os.Environ()); the strip list is
@@ -52,6 +62,12 @@ type Options struct {
 
 // New returns the Claude Code executor.
 func New(opts Options) executor.Executor {
+	if opts.StreamPersistBytes <= 0 {
+		opts.StreamPersistBytes = 64 << 20
+	}
+	if opts.StderrPersistBytes <= 0 {
+		opts.StderrPersistBytes = 8 << 20
+	}
 	if opts.MaxTurns <= 0 {
 		opts.MaxTurns = 150
 	}
