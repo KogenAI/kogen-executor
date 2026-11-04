@@ -29,6 +29,9 @@ type policy struct {
 	// ReadOnly denies every file-writing tool call (the Shape role may inspect the checkout
 	// but never change it).
 	ReadOnly bool `json:"read_only,omitempty"`
+	// ArtifactDir is the executor artifact directory (resolved) when it is the checkout, inside
+	// it or a parent of it. File tools may not write to it: it holds this policy and the hook log.
+	ArtifactDir string `json:"artifact_dir,omitempty"`
 }
 
 // sentinel is one hook log record: proof the hook ran for a tool call, written BEFORE the hook
@@ -167,6 +170,15 @@ func decide(pol policy, cwd, raw string) (allow bool, reason, resolved string) {
 	targets := []string{lexical, resolved}
 	if !within(root, resolved) {
 		return false, "the path is outside the checkout", resolved
+	}
+	if pol.ArtifactDir != "" {
+		for _, ad := range []string{pol.ArtifactDir, resolveReal(pol.ArtifactDir)} {
+			for _, t := range targets {
+				if within(ad, t) {
+					return false, "this is the executor artifact directory (" + pol.ArtifactDir + ")", resolved
+				}
+			}
+		}
 	}
 	for _, t := range targets {
 		if rel, ok := relUnder(root, t); ok && hasGitComponent(rel) {

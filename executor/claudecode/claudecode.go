@@ -351,6 +351,12 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 		return nil, executor.Fail(executor.ReasonUnavailable, "executor artifact directory: "+err.Error())
 	}
 
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, executor.Fail(executor.ReasonUnavailable, "executor artifact directory: "+err.Error())
+	}
+	dirInCheckout := within(root, realDir) || within(realDir, root)
+
 	nonce, err := randomHex(16)
 	if err != nil {
 		return nil, executor.Fail(executor.ReasonFailed, "no randomness for the run nonce: "+err.Error())
@@ -360,6 +366,9 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 		return nil, executor.Fail(executor.ReasonFailed, "no randomness for the session id: "+err.Error())
 	}
 	pol := policy{Root: root, Protected: protected, Log: filepath.Join(dir, "hook-log.jsonl"), Nonce: nonce, ReadOnly: t.Role == executor.RoleShape}
+	if dirInCheckout {
+		pol.ArtifactDir = realDir
+	}
 	policyPath := filepath.Join(dir, "hook-policy.json")
 	settingsPath := filepath.Join(dir, "claude-settings.json")
 	if err := writePrivate(policyPath, mustJSON(pol)); err != nil {
@@ -398,6 +407,9 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 	if count > 0 {
 		started["protected_dropped_count"] = count
 		started["protected_dropped"] = dropped
+	}
+	if dirInCheckout {
+		started["artifact_dir_in_checkout"] = true
 	}
 	emit(started)
 	return s, nil
