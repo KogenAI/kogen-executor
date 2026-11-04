@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-executor/agent"
-	"kogen-loop/provider"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 const agentConsumers = "kogen-build, kogen-shaping, kogen-setup, kogen-review, kogen cli"

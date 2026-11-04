@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // OriginRelogin is the line that names the command a user runs after the loop refuses to

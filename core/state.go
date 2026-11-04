@@ -10,7 +10,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/provider"
 )
 
 // Tokens is a token total, as a Build's run record and checkpoint hold it. A count is nil

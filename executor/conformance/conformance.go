@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 //go:embed scripts/*.json

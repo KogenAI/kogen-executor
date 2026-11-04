@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // everyTool is the seven generic tools. Kogen's own tools (finish, report_blocker, probe,

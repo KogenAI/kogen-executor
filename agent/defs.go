@@ -3,7 +3,7 @@ package agent
 import (
 	"fmt"
 
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // Defs returns the model-facing definition of each named generic tool, in order: the file,

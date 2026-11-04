@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"kogen-loop/provider"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // BuildReviewBudget is the fixed provider response budget of native Build and independent

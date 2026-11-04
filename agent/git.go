@@ -3,7 +3,7 @@ package agent
 import (
 	"github.com/KogenAI/kogen-coordinator/git"
 
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // Git adapts a Kogen repository to the Git of kogen-loop's tools, so list_files, search_text

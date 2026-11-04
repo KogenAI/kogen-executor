@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // eq fails the test when got differs from want; item names the contract item and its consumer.

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/git"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // gitIn runs git in dir and fails the test when it fails.

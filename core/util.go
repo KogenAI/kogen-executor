@@ -12,8 +12,8 @@ import (
 	"unicode"
 
 	"github.com/KogenAI/kogen-executor/agent"
-	"kogen-loop/sys"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // NonNil is s, or an empty list for nil (a JSON array, never null).

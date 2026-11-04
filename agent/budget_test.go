@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"kogen-loop/provider"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // TestBudgetRoleConstants holds the response budget of each role: Build and Review get the

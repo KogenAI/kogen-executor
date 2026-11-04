@@ -12,7 +12,7 @@ import (
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-executor/executor/claudecode"
 	"github.com/KogenAI/kogen-executor/executor/conformance"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // profileRound is one scripted round: Stream items are a number (sleep that many seconds),
