@@ -343,6 +343,33 @@ func (r *roundRun) toolResults(ev, original map[string]any) error {
 	return nil
 }
 
+// checkUnanswered validates guarded calls still pending at an accepted result.
+func (r *roundRun) checkUnanswered() error {
+	for id := range r.pending {
+		name, guarded := r.guarded[id]
+		if !guarded {
+			continue
+		}
+		recs, err := r.hookLog.read(r.s.pol.Log, r.s.pol.Nonce)
+		if err != nil {
+			return executor.Fail(executor.ReasonProtocol, "cannot read the hook log: "+bound(err.Error(), 100))
+		}
+		rec, found := recs[id]
+		if !found && !r.targets[id].unchanged() {
+			return executor.Fail(executor.ReasonProtocol, "hook did not run for the "+name+" call "+quoteBound(id)+"; the round was stopped")
+		}
+		denied := found && rec.Decision == "deny"
+		if found {
+			r.s.emit(map[string]any{"event": "executor_hook", "round": r.n, "tool_use_id": id, "tool_name": name, "decision": rec.Decision, "hook": "pretool"})
+		}
+		if denied && !r.targets[id].unchanged() {
+			return executor.Fail(executor.ReasonProtocol, "the "+name+" call "+quoteBound(id)+" was denied by the hook but ran; the round was stopped")
+		}
+		r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": denied, "arguments": r.arguments[id], "unanswered": true})
+	}
+	return nil
+}
+
 // resultSize counts decoded text bytes and content items without retaining the content.
 func resultSize(content any) (int, int) {
 	switch v := content.(type) {
@@ -541,6 +568,10 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 			}
 		}
 		return executor.RoundResult{}, executor.Fail(reason, d)
+	}
+
+	if err := r.checkUnanswered(); err != nil {
+		return executor.RoundResult{}, err
 	}
 
 	usage := s.mapUsage(res, r.model)

@@ -1,0 +1,11 @@
+{
+  "None": false,
+  "Path": ".kogen/models/k-exec-unanswered-guarded-call-at-result/model.qnt",
+  "Invariants": [
+    "GuardBeforeAccept",
+    "ReportUnanswered"
+  ],
+  "Seed": "41",
+  "Samples": "100",
+  "Steps": "20"
+}
