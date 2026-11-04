@@ -1,0 +1,12 @@
+{
+  "None": false,
+  "Path": ".kogen/models/k-exec-benign-events-after-result/model.qnt",
+  "Invariants": [
+    "Preserved",
+    "Bounded",
+    "FailureAfterResult"
+  ],
+  "Seed": "17",
+  "Samples": "100",
+  "Steps": "20"
+}

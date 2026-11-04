@@ -56,8 +56,8 @@ type fakeConfig struct {
 	// NoResult ends the stream after init with exit code ExitCode.
 	NoResult bool `json:"no_result"`
 	ExitCode int  `json:"exit_code"`
-	// TrailingEvent emits one more event after the result.
-	TrailingEvent bool `json:"trailing_event"`
+	// TrailingLines are emitted verbatim after the result.
+	TrailingLines []string `json:"trailing_lines"`
 	// TrailingKind emits one more protocol violation after the result: "malformed" (a line that is
 	// not JSON), "duplicate" (a second result) or "assistant" (an ordinary assistant event).
 	TrailingKind string `json:"trailing_kind"`
@@ -390,8 +390,8 @@ func fakeClaude(cfgPath string, args []string) int {
 	case "assistant":
 		out(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "one more thing"}}}})
 	}
-	if cfg.TrailingEvent {
-		out(map[string]any{"type": "rate_limit_event"})
+	for _, line := range cfg.TrailingLines {
+		fmt.Println(line)
 	}
 	if cfg.LingerSeconds > 0 {
 		time.Sleep(time.Duration(cfg.LingerSeconds * float64(time.Second)))

@@ -902,11 +902,68 @@ func TestResultFailures(t *testing.T) {
 }
 
 func TestEventAfterResultIsProtocolFailure(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t, fakeConfig{TrailingEvent: true, Script: oneRound(finishRound)})
-	s := h.startOK()
-	_, err := s.Round(context.Background(), executor.Input{})
-	wantError(t, err, "executor/protocol")
+	for _, line := range []string{`{"type":"result"}`, `{"type":"assistant"}`, `{"type":"user"}`, `{"type":"unknown"}`, `{"type":"system","subtype":"init"}`, `{"type":"system","subtype":"compact_boundary"}`, `{"type":"system","subtype":"unknown"}`, `not JSON`, `[]`, `null`, `42`} {
+		t.Run(line, func(t *testing.T) {
+			h := newHarness(t, fakeConfig{TrailingLines: []string{line}, Script: oneRound(finishRound)})
+			_, err := h.startOK().Round(context.Background(), executor.Input{})
+			e := wantError(t, err, "executor/protocol")
+			if e.Detail != "the event stream continued after its result" {
+				t.Fatalf("detail %q", e.Detail)
+			}
+		})
+	}
+}
+
+func TestBenignEventsAfterResult(t *testing.T) {
+	run := func(t *testing.T, lines []string) (executor.RoundResult, map[string]any) {
+		t.Helper()
+		h := newHarness(t, fakeConfig{TrailingLines: lines, Script: oneRound(finishRound)})
+		res, err := h.startOK().Round(context.Background(), executor.Input{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		events := h.eventsNamed("executor_round_ended")
+		if len(events) != 1 {
+			t.Fatalf("events %v", h.events)
+		}
+		return res, events[0]
+	}
+	base, baseEvent := run(t, nil)
+	for _, tc := range []struct {
+		name      string
+		lines     []string
+		snapshot  map[string]any
+		rateCount int
+	}{
+		{"hook started", []string{`{"type":"system","subtype":"hook_started"}`}, nil, 0},
+		{"hook response", []string{`{"type":"system","subtype":"hook_response"}`}, nil, 0},
+		{"plugin", []string{`{"type":"system","subtype":"plugin_install"}`}, nil, 0},
+		{"rate", []string{`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}`}, map[string]any{"status": "allowed"}, 1},
+		{"mixed", []string{`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}`, `{"type":"system","subtype":"hook_response"}`, `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"five_hour","resetsAt":123}}`, `{"type":"rate_limit_event"}`}, map[string]any{"status": "allowed_warning", "rateLimitType": "five_hour", "resetsAt": json.Number("123")}, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, event := run(t, tc.lines)
+			if res.Ending != base.Ending || res.Claim != "done" || !reflect.DeepEqual(res.Structured, base.Structured) || !reflect.DeepEqual(res.Usage, base.Usage) || !reflect.DeepEqual(event["usage"], baseEvent["usage"]) {
+				t.Fatalf("result %+v baseline %+v event %v baseline %v", res, base, event, baseEvent)
+			}
+			if event["events_after_result"] != len(tc.lines) {
+				t.Fatalf("event %v", event)
+			}
+			if tc.rateCount == 0 {
+				if _, ok := event["rate_limit_event_count"]; ok {
+					t.Fatalf("event %v", event)
+				}
+			} else if event["rate_limit_event_count"] != tc.rateCount {
+				t.Fatalf("event %v", event)
+			}
+			if !reflect.DeepEqual(event["rate_limit_info"], any(tc.snapshot)) && !(tc.snapshot == nil && event["rate_limit_info"] == nil) {
+				t.Fatalf("snapshot %v", event)
+			}
+		})
+	}
+	if _, ok := baseEvent["events_after_result"]; ok {
+		t.Fatalf("zero count: %v", baseEvent)
+	}
 }
 
 func TestMaxTurnsIsNoCallClaim(t *testing.T) {
@@ -1370,6 +1427,16 @@ func TestRoundDoesNotInheritModelOrHeaders(t *testing.T) {
 		key, _, _ := strings.Cut(kv, "=")
 		if key == "ANTHROPIC_MODEL" || key == "ANTHROPIC_CUSTOM_HEADERS" {
 			t.Errorf("%s reached the round", key)
+		}
+	}
+}
+
+func TestBenignTailPreservesStructuredSubmission(t *testing.T) {
+	for _, lines := range [][]string{nil, {`{"type":"system","subtype":"hook_response"}`}} {
+		h := roleHarness(t, executor.RoleShape, fakeConfig{TrailingLines: lines, Script: oneRound(structuredRound(`{"files":["proposal"]}`))})
+		res, err := h.startOK().Round(context.Background(), executor.Input{})
+		if err != nil || res.Ending != executor.EndFinish || res.Claim != "done" || string(res.Structured) != `{"files":["proposal"]}` {
+			t.Fatalf("result %+v, error %v", res, err)
 		}
 	}
 }

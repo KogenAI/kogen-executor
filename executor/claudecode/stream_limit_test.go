@@ -15,7 +15,7 @@ func TestRoundRateLimitTelemetry(t *testing.T) {
 		{"multibyte", strings.Repeat("a", 127) + "界", strings.Repeat("a", 127)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &roundRun{init: true}
+			r := &roundRun{init: true, result: map[string]any{"type": "result"}}
 			b, _ := json.Marshal(map[string]any{"type": "rate_limit_event", "rate_limit_info": map[string]any{"status": tc.value, "rateLimitType": tc.value, "resetsAt": json.Number("1800000000.25"), "account": "PRIVATE", "utilization": 0.5}})
 			if err := r.line(b); err != nil {
 				t.Fatal(err)

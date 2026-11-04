@@ -93,3 +93,26 @@ func TestLineGap(t *testing.T) {
 		t.Fatalf("gap %v", r.maxGap)
 	}
 }
+
+func TestEventsAfterResultCount(t *testing.T) {
+	for _, tc := range []struct{ before, after int }{{0, 1}, {2147483646, 2147483647}, {2147483647, 2147483647}} {
+		r := &roundRun{init: true, result: map[string]any{"type": "result"}, eventsAfterResult: tc.before}
+		profileLine(t, r, "system", "hook_started")
+		if r.eventsAfterResult != tc.after {
+			t.Fatalf("count %d, want %d", r.eventsAfterResult, tc.after)
+		}
+		if err := r.line([]byte(`{"type":"user"}`)); err == nil {
+			t.Fatal("accepted user")
+		}
+		event := map[string]any{}
+		r.addProfile(event)
+		if event["events_after_result"] != tc.after {
+			t.Fatalf("profile %v", event)
+		}
+	}
+	event := map[string]any{}
+	(&roundRun{}).addProfile(event)
+	if _, ok := event["events_after_result"]; ok {
+		t.Fatalf("zero count: %v", event)
+	}
+}

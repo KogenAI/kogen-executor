@@ -52,14 +52,15 @@ type roundRun struct {
 	pending        map[string]bool
 
 	// Round profile: observation only, reported in the terminal event.
-	started     time.Time // the round's run state was created
-	procStarted time.Time // the Claude Code process was started
-	received    time.Time // receipt of the line being handled
-	lastLine    time.Time // receipt of the previous line, zero before the first
-	maxGap      time.Duration
-	initAfter   time.Duration // process start to the accepted init line
-	initSeen    bool
-	ignored     map[string]int // ignored type/subtype key -> count
+	started           time.Time // the round's run state was created
+	procStarted       time.Time // the Claude Code process was started
+	received          time.Time // receipt of the line being handled
+	lastLine          time.Time // receipt of the previous line, zero before the first
+	maxGap            time.Duration
+	initAfter         time.Duration // process start to the accepted init line
+	initSeen          bool
+	ignored           map[string]int // ignored type/subtype key -> count
+	eventsAfterResult int
 }
 
 const (
@@ -107,6 +108,9 @@ func (r *roundRun) addProfile(event map[string]any) {
 		event["init_ms"] = r.initAfter.Milliseconds()
 	}
 	event["max_line_gap_ms"] = r.maxGap.Milliseconds()
+	if r.eventsAfterResult != 0 {
+		event["events_after_result"] = r.eventsAfterResult
+	}
 	if len(r.ignored) != 0 {
 		event["ignored_events"] = r.ignored
 	}
@@ -121,11 +125,17 @@ func (r *roundRun) line(b []byte) error {
 func (r *roundRun) lineReceived(b, received []byte) error {
 	r.lines++
 	ev, err := decodeObject(b)
-	if err != nil {
-		return executor.Fail(executor.ReasonProtocol, "line "+strconv.Itoa(r.lines)+" of the event stream is not a JSON object")
-	}
 	if r.result != nil {
-		return executor.Fail(executor.ReasonProtocol, "the event stream continued after its result")
+		typ, _ := ev["type"].(string)
+		sub, _ := ev["subtype"].(string)
+		if err != nil || !(typ == "rate_limit_event" || typ == "system" && (sub == "hook_started" || sub == "hook_response" || sub == "plugin_install")) {
+			return executor.Fail(executor.ReasonProtocol, "the event stream continued after its result")
+		}
+		if r.eventsAfterResult < math.MaxInt32 {
+			r.eventsAfterResult++
+		}
+	} else if err != nil {
+		return executor.Fail(executor.ReasonProtocol, "line "+strconv.Itoa(r.lines)+" of the event stream is not a JSON object")
 	}
 	typ, _ := ev["type"].(string)
 	sub, _ := ev["subtype"].(string)
