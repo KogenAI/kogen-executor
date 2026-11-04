@@ -2,6 +2,25 @@ package claudecode
 
 import "io"
 
+type retainedWriter struct {
+	w    io.Writer
+	kept int64
+	err  error
+}
+
+func (p *retainedWriter) Write(b []byte) (int, error) {
+	if p.err != nil {
+		return 0, p.err
+	}
+	n, err := p.w.Write(b)
+	p.kept += int64(n)
+	if err == nil && n != len(b) {
+		err = io.ErrShortWrite
+	}
+	p.err = err
+	return n, err
+}
+
 type stderrPersistence struct {
 	w               io.Writer
 	cap, kept, lost int64
@@ -14,6 +33,9 @@ func (p *stderrPersistence) Write(b []byte) (int, error) {
 		p.kept += int64(written)
 		if err != nil {
 			return written, err
+		}
+		if written != n {
+			return written, io.ErrShortWrite
 		}
 	}
 	p.lost += int64(len(b) - n)

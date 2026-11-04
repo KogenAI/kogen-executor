@@ -32,8 +32,10 @@ func (r *redactWriter) Write(p []byte) (int, error) {
 
 // copyRedacted copies r to w and then keeps draining r, even after a write error, so the writer
 // of the pipe never blocks.
-func copyRedacted(w io.Writer, r io.Reader) {
-	io.Copy(w, r)
+func copyRedacted(w io.Writer, r io.Reader, failed chan<- struct{}) {
+	if _, err := io.Copy(w, r); err != nil {
+		failed <- struct{}{}
+	}
 	io.Copy(io.Discard, r)
 }
 

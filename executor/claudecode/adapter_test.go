@@ -1389,7 +1389,10 @@ func TestRedactCopyDrainsAfterWriteError(t *testing.T) {
 	}
 	defer r.Close()
 	done := make(chan struct{})
-	go func() { defer close(done); copyRedacted(newRedactWriter(failWriter{}, "SECRETTOKEN", "[x]"), r) }()
+	go func() {
+		defer close(done)
+		copyRedacted(newRedactWriter(failWriter{}, "SECRETTOKEN", "[x]"), r, make(chan struct{}, 1))
+	}()
 	go func() { w.Write(bytes.Repeat([]byte("y"), 1<<20)); w.Close() }()
 	select {
 	case <-done:

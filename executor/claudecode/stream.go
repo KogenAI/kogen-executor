@@ -26,6 +26,8 @@ var guardedTools = map[string]bool{"Write": true, "Edit": true, "MultiEdit": tru
 // roundRun is the state of one round's event stream.
 type roundRun struct {
 	streamLostBytes, streamLostLines, stderrLostBytes int64
+	artifact                                          string
+	keptBytes                                         int64
 
 	s                 *session
 	n                 int

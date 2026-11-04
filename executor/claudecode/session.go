@@ -115,6 +115,10 @@ func (s *session) Round(ctx context.Context, in executor.Input) (executor.RoundR
 			eventDetail = detail
 		}
 		event := map[string]any{"event": "executor_round_failed", "role": s.role, "round": n, "reason": reason, "detail": eventDetail, "deadline_remaining_ms": remaining}
+		if rr.artifact != "" {
+			event["artifact"] = rr.artifact
+			event["kept_bytes"] = rr.keptBytes
+		}
 		if rr.interrupted {
 			addInterruptCause(event, ctx)
 		}
@@ -176,7 +180,7 @@ func (a *adapter) FirstPromptBytes(role string, brief executor.Brief) int {
 	return len(constraintsFor(role)) + len(promptSep) + len(brief.Stable) + len(promptSep) + len(brief.Dynamic)
 }
 
-func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundRun) (executor.RoundResult, error) {
+func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundRun) (result executor.RoundResult, roundErr error) {
 	if ctx.Err() != nil {
 		return executor.RoundResult{}, rr.classifyContext(ctx)
 	}
@@ -186,12 +190,15 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 	if err != nil {
 		return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "cannot write the round stream: "+err.Error())
 	}
-	defer raw.Close()
 	errf, err := os.OpenFile(errPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
+		raw.Close()
 		return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "cannot write the round stderr: "+err.Error())
 	}
+	defer raw.Close()
 	defer errf.Close()
+	streamFile := &retainedWriter{w: raw}
+	stderrFile := &retainedWriter{w: errf}
 	// Drain stderr through a bounded writer after streaming redaction.
 	er, ew, perr := os.Pipe()
 	if perr != nil {
@@ -200,7 +207,7 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 	defer er.Close()
 	defer ew.Close()
 	stderr := ew
-	capped := &stderrPersistence{w: errf, cap: s.a.opts.StderrPersistBytes}
+	capped := &stderrPersistence{w: stderrFile, cap: s.a.opts.StderrPersistBytes}
 	var errw *redactWriter
 	var target io.Writer = capped
 	if tok := s.a.opts.Token; tok != "" {
@@ -208,7 +215,8 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 		target = errw
 	}
 	errCopied := make(chan struct{})
-	go func() { defer close(errCopied); copyRedacted(target, er) }()
+	stderrFailed := make(chan struct{}, 1)
+	go func() { defer close(errCopied); copyRedacted(target, er, stderrFailed) }()
 	var streamKept int64
 	finalized := false
 	finalize := func() {
@@ -228,13 +236,30 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 		}
 		rr.stderrLostBytes = capped.lost
 		if capped.lost > 0 {
-			fmt.Fprintf(errf, "\n[kogen: stderr persistence stopped at cap_bytes=%d; unpersisted_bytes=%d]\n", capped.cap, capped.lost)
+			fmt.Fprintf(stderrFile, "\n[kogen: stderr persistence stopped at cap_bytes=%d; unpersisted_bytes=%d]\n", capped.cap, capped.lost)
 		}
 		if rr.streamLostLines > 0 {
-			fmt.Fprintf(raw, "{\"type\":\"kogen_persistence_truncated\",\"cap_bytes\":%d,\"unpersisted_lines\":%d,\"unpersisted_bytes\":%d}\n", s.a.opts.StreamPersistBytes, rr.streamLostLines, rr.streamLostBytes)
+			fmt.Fprintf(streamFile, "{\"type\":\"kogen_persistence_truncated\",\"cap_bytes\":%d,\"unpersisted_lines\":%d,\"unpersisted_bytes\":%d}\n", s.a.opts.StreamPersistBytes, rr.streamLostLines, rr.streamLostBytes)
+		}
+		if err := raw.Close(); streamFile.err == nil {
+			streamFile.err = err
+		}
+		if err := errf.Close(); stderrFile.err == nil {
+			stderrFile.err = err
 		}
 	}
-	defer finalize()
+	defer func() {
+		finalize()
+		if streamFile.err != nil {
+			rr.artifact, rr.keptBytes = filepath.Base(rawPath), streamFile.kept
+		} else if stderrFile.err != nil {
+			rr.artifact, rr.keptBytes = filepath.Base(errPath), stderrFile.kept
+		}
+		if rr.artifact != "" {
+			result = executor.RoundResult{}
+			roundErr = executor.Fail(executor.ReasonFailed, "cannot persist "+rr.artifact+" after "+strconv.FormatInt(rr.keptBytes, 10)+" bytes")
+		}
+	}()
 
 	args := roleRoundArgs(s.a.opts, s.role, s.schema, s.sessionID, n, s.task.Model, s.task.Effort, s.settingsPath, s.a.opts.MaxTurns)
 	cmd := exec.Command(s.bin, args...)
@@ -337,6 +362,8 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 loop:
 	for {
 		select {
+		case <-stderrFailed:
+			return fail(executor.Fail(executor.ReasonFailed, "artifact write failed"))
 		case <-ctx.Done():
 			terminateGroup(pgid, exited, s.a.opts.KillGrace)
 			return executor.RoundResult{}, rr.classifyContext(ctx)
@@ -363,9 +390,12 @@ loop:
 				rr.streamLostLines++
 				rr.streamLostBytes += size
 			} else {
-				raw.Write(line)
-				raw.Write([]byte{'\n'})
-				streamKept += size
+				streamFile.Write(line)
+				streamFile.Write([]byte{'\n'})
+				streamKept = streamFile.kept
+				if streamFile.err != nil {
+					return fail(executor.Fail(executor.ReasonFailed, "artifact write failed"))
+				}
 			}
 			if err := rr.lineReceived(line, m.line); err != nil {
 				return fail(err)
@@ -419,7 +449,10 @@ loop:
 		exit = -1
 	}
 	finalize()
-	result, err := rr.finish(exit, killed, errPath)
+	if streamFile.err != nil || stderrFile.err != nil {
+		return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "artifact write failed")
+	}
+	result, err = rr.finish(exit, killed, errPath)
 	if e, ok := sys.AsError(err); ok && e.Class == "executor" && e.Reason == executor.ReasonUsageLimit && groupAlive(pgid) {
 		return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "Claude Code process group did not exit; continuation is unsafe")
 	}

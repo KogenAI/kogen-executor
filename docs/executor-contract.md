@@ -49,3 +49,12 @@ The stderr marker includes the leading separator newline. On either terminal
 `stream_persist_truncated: true` and `stream_persist_unpersisted_bytes`, or
 `stderr_persist_truncated: true` and `stderr_persist_unpersisted_bytes`, for
 the affected file only. Under the cap these fields and markers are absent.
+
+A failed or short write to either artifact, including a truncation marker or the
+final stderr redactor flush, fails the round with `executor/failed` rather than
+emitting `executor_round_ended`. The terminal `executor_round_failed` event has
+`artifact` (the basename `round-N.jsonl` or `round-N.stderr`) and `kept_bytes`
+(the integer count actually written, including any marker bytes). The error
+identifies only that basename and byte count, not artifact content or the I/O
+error text. Stderr is drained and the process group cleaned up before return.
+This is not an fsync durability guarantee.
