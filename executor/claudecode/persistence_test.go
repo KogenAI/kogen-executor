@@ -3,6 +3,7 @@ package claudecode
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -179,7 +180,21 @@ func TestFinalPersistenceFailures(t *testing.T) {
 				t.Fatal(err)
 			}
 			ss.bin = wrapper
-			if err := os.Symlink("/dev/full", filepath.Join(h.task.Dir, tc.artifact)); err != nil {
+			// /dev/full makes the persistence write fail. Where it cannot be opened, a pipe
+			// whose read end is already closed fails that write the same way.
+			sink := "/dev/full"
+			if f, err := os.OpenFile(sink, os.O_WRONLY, 0); err != nil {
+				r, w, perr := os.Pipe()
+				if perr != nil {
+					t.Fatal(perr)
+				}
+				r.Close()
+				t.Cleanup(func() { w.Close() })
+				sink = fmt.Sprintf("/dev/fd/%d", w.Fd())
+			} else {
+				f.Close()
+			}
+			if err := os.Symlink(sink, filepath.Join(h.task.Dir, tc.artifact)); err != nil {
 				t.Fatal(err)
 			}
 			_, err = s.Round(context.Background(), executor.Input{})

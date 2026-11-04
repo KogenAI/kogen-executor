@@ -343,12 +343,9 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 	if t.Dir == "" {
 		return nil, executor.Fail(executor.ReasonUnavailable, "no executor artifact directory was given")
 	}
-	if err := os.MkdirAll(t.Dir, 0o700); err != nil {
-		return nil, executor.Fail(executor.ReasonUnavailable, "cannot create the executor artifact directory: "+err.Error())
-	}
-	dir, err := filepath.Abs(t.Dir)
+	dir, tightened, err := secureArtifactDir(t.Dir)
 	if err != nil {
-		return nil, executor.Fail(executor.ReasonUnavailable, "executor artifact directory: "+err.Error())
+		return nil, err
 	}
 
 	realDir, err := filepath.EvalSymlinks(dir)
@@ -411,8 +408,87 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 	if dirInCheckout {
 		started["artifact_dir_in_checkout"] = true
 	}
+	if tightened {
+		started["artifact_dir_mode_tightened"] = true
+	}
 	emit(started)
 	return s, nil
+}
+
+// artifactDirForeignOwner and artifactDirChmodFail are test-only seams. Production leaves them unset.
+// They do not apply to a directory this Start created.
+const (
+	artifactDirForeignOwner = "KOGEN_ARTIFACT_DIR_FOREIGN_OWNER"
+	artifactDirChmodFail    = "KOGEN_ARTIFACT_DIR_CHMOD_FAIL"
+)
+
+// secureArtifactDir chooses the session directory. An absent final component is created at 0700.
+// A final-component symlink is resolved once and that directory is checked and used. An existing
+// directory this user does not own is refused. Group or world access is tightened to 0700.
+func secureArtifactDir(given string) (string, bool, error) {
+	abs, err := filepath.Abs(given)
+	if err != nil {
+		return "", false, executor.Fail(executor.ReasonUnavailable, "executor artifact directory: "+err.Error())
+	}
+	fi, lerr := os.Lstat(abs)
+	if os.IsNotExist(lerr) {
+		if err := os.MkdirAll(abs, 0o700); err != nil {
+			return "", false, executor.Fail(executor.ReasonUnavailable, "cannot create the executor artifact directory: "+err.Error())
+		}
+		return abs, false, nil
+	}
+	if lerr != nil {
+		return "", false, executor.Fail(executor.ReasonUnavailable, "cannot create the executor artifact directory: "+lerr.Error())
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		target, rerr := os.Readlink(abs)
+		if rerr != nil {
+			return "", false, executor.Fail(executor.ReasonUnavailable, "cannot secure the executor artifact directory "+abs+": not a directory")
+		}
+		// filepath.Join appends an absolute target onto the link directory.
+		// Keep an absolute target and resolve a relative one, once.
+		resolved := target
+		if !filepath.IsAbs(target) {
+			resolved = filepath.Join(filepath.Dir(abs), target)
+		}
+		resolved = filepath.Clean(resolved)
+		rfi, rerr := os.Lstat(resolved)
+		if rerr != nil || !rfi.IsDir() || rfi.Mode()&os.ModeSymlink != 0 {
+			return "", false, executor.Fail(executor.ReasonUnavailable, "cannot secure the executor artifact directory "+resolved+": not a directory")
+		}
+		return ownAndTightenArtifactDir(resolved, rfi)
+	}
+	if !fi.IsDir() {
+		if err := os.MkdirAll(abs, 0o700); err != nil {
+			return "", false, executor.Fail(executor.ReasonUnavailable, "cannot create the executor artifact directory: "+err.Error())
+		}
+		return abs, false, nil
+	}
+	return ownAndTightenArtifactDir(abs, fi)
+}
+
+func ownAndTightenArtifactDir(dir string, fi os.FileInfo) (string, bool, error) {
+	if os.Getenv(artifactDirForeignOwner) != "" || !artifactDirOwned(fi) {
+		return "", false, executor.Fail(executor.ReasonUnavailable, "cannot secure the executor artifact directory "+dir+": not owned by this user")
+	}
+	if fi.Mode().Perm()&0o077 == 0 {
+		return dir, false, nil
+	}
+	if os.Getenv(artifactDirChmodFail) != "" {
+		return "", false, executor.Fail(executor.ReasonUnavailable, "cannot secure the executor artifact directory "+dir+": cannot change its mode: operation not permitted")
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", false, executor.Fail(executor.ReasonUnavailable, "cannot secure the executor artifact directory "+dir+": cannot change its mode: "+err.Error())
+	}
+	return dir, true, nil
+}
+
+func artifactDirOwned(fi os.FileInfo) bool {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	return st.Uid == uint32(os.Getuid())
 }
 
 // tokenRefusedHint is the auth_refused detail when Claude Code does not accept the stored token.
