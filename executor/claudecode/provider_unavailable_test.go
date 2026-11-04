@@ -16,6 +16,7 @@ func TestProviderUnavailableResults(t *testing.T) {
 		want            string
 	}{
 		{"assistant", "overloaded", nil, "executor/provider_unavailable"},
+		{"authenticate while overloaded", "overloaded", map[string]any{"result": "Unable to authenticate while provider is overloaded"}, "executor/provider_unavailable"},
 		{"529", "", map[string]any{"result": "API Error: 529 overloaded_error"}, "executor/provider_unavailable"},
 		{"503", "", map[string]any{"result": "API Error: 503 Service Unavailable"}, "executor/provider_unavailable"},
 		{"500", "", map[string]any{"result": "API Error: 500 Internal Server Error"}, "executor/provider_unavailable"},

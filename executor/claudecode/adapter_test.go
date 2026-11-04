@@ -1215,32 +1215,50 @@ func TestTokenOnFD3EveryRound(t *testing.T) {
 	}
 }
 
-// A rejected token passes `auth status` (it checks nothing server-side) and fails the round.
+// Local auth status cannot detect a server-refused sign-in on either route.
 func TestStoredTokenRejectedByRound(t *testing.T) {
 	t.Parallel()
 	const token = "sk-ant-oat01-SYNTHETIC-BAD"
-	h := newHarness(t, fakeConfig{
-		Auth:     `{"loggedIn":true,"authMethod":"oauth_token","apiProvider":"firstParty"}`,
-		AuthFail: true, Script: oneRound(finishRound),
-	})
-	opts := h.f.options()
-	opts.Token = token
-	s, err := h.start(opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	_, err = s.Round(context.Background(), executor.Input{})
-	e := wantError(t, err, "executor/auth_refused")
-	if !strings.Contains(e.Detail, "claude setup-token") || !strings.Contains(e.Detail, "kogen provider login claude-code") {
-		t.Fatalf("no hint: %v", err)
-	}
-	// Without a stored token the same round is a plain failure, not a token hint.
-	h2 := newHarness(t, fakeConfig{AuthFail: true, Script: oneRound(finishRound)})
-	s2 := h2.startOK()
-	_, err = s2.Round(context.Background(), executor.Input{})
-	if e, ok := sys.AsError(err); ok && strings.Contains(e.Detail, "stored token") {
-		t.Fatalf("token hint without a token: %v", err)
+	const diagnostic = "Failed to authenticate. API Error: 401 OAuth access token is invalid. sk-ant-oat01-SYNTHETIC-BAD account@example.com"
+	for _, stored := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, assistant, text string
+			authFail              bool
+		}{
+			{"assistant and 401", "", diagnostic, true},
+			{"401 only", "", diagnostic, false},
+			{"assistant only", "authentication_failed", "", false},
+		} {
+			t.Run(fmt.Sprintf("stored=%v/%s", stored, tc.name), func(t *testing.T) {
+				cfg := fakeConfig{Script: oneRound(finishRound), AuthFail: tc.authFail, AssistantError: tc.assistant, Result: map[string]any{"is_error": true, "terminal_reason": "api_error", "result": tc.text}}
+				if stored {
+					cfg.Auth = `{"loggedIn":true,"authMethod":"oauth_token","apiProvider":"firstParty"}`
+				}
+				h := newHarness(t, cfg)
+				opts := h.f.options()
+				if stored {
+					opts.Token = token
+				}
+				s, err := h.start(opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer s.Close()
+				_, err = s.Round(context.Background(), executor.Input{})
+				detail := wantError(t, err, "executor/auth_refused").Detail
+				if stored && detail != tokenRefusedHint {
+					t.Fatalf("detail %q", detail)
+				}
+				if !stored && (!strings.Contains(detail, "kogen provider login claude-code") || strings.Contains(detail, "stored token")) {
+					t.Fatalf("detail %q", detail)
+				}
+				for _, secret := range []string{diagnostic, "401", token, "account@example.com"} {
+					if strings.Contains(detail, secret) {
+						t.Fatalf("unsafe detail %q", detail)
+					}
+				}
+			})
+		}
 	}
 }
 

@@ -78,8 +78,8 @@ func TestPromptTooLongClassification(t *testing.T) {
 		{"text alone", "", map[string]any{"is_error": true, "terminal_reason": "api_error", "result": "Prompt is too long"}, "candidate/context_budget_exceeded"},
 		{"before the usage limit", "", map[string]any{"is_error": true, "terminal_reason": "blocking_limit", "result": "Prompt is too long: usage limit"}, "candidate/context_budget_exceeded"},
 		{"not an error result", "", map[string]any{"is_error": false, "terminal_reason": "blocking_limit", "result": "Prompt is too long"}, ""},
-		{"after the authentication check", "", map[string]any{"is_error": true, "terminal_reason": "api_error", "result": "Failed to authenticate: Prompt is too long"}, "executor/failed"},
-		{"authentication assistant error", "authentication_failed", map[string]any{"is_error": true, "terminal_reason": "blocking_limit", "result": "Prompt is too long"}, "executor/failed"},
+		{"after the authentication check", "", map[string]any{"is_error": true, "terminal_reason": "api_error", "result": "Failed to authenticate: Prompt is too long"}, "executor/auth_refused"},
+		{"authentication assistant error", "authentication_failed", map[string]any{"is_error": true, "terminal_reason": "blocking_limit", "result": "Prompt is too long"}, "executor/auth_refused"},
 		{"another error", "", map[string]any{"is_error": true, "terminal_reason": "api_error", "result": "overloaded"}, "executor/provider_unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -3,6 +3,7 @@ package claudecode
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/executor"
@@ -97,27 +98,33 @@ func TestFailedRoundCostIsDeltaAndKeepsBaseline(t *testing.T) {
 }
 
 func TestFailedAuthRoundReportsUsage(t *testing.T) {
-	h := newHarness(t, fakeConfig{
-		Auth:     `{"loggedIn":true,"authMethod":"oauth_token","apiProvider":"firstParty"}`,
-		AuthFail: true, Script: oneRound(finishRound),
-		Result: map[string]any{"num_turns": 1, "total_cost_usd": 0.5, "usage": errorUsage},
-	})
-	opts := h.f.options()
-	opts.Token = "sk-ant-oat01-SYNTHETIC-BAD"
-	s, err := h.start(opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	_, err = s.Round(context.Background(), executor.Input{})
-	wantError(t, err, "executor/auth_refused")
-	ev := failedEvent(t, h)
-	if ev["reason"] != "auth_refused" || ev["num_turns"] != 1 || ev["subtype"] != "success" {
-		t.Fatalf("event %v", ev)
-	}
-	usage := ev["usage"].(map[string]any)
-	if usage["input"] != 35 || usage["cost_usd"] != 0.5 {
-		t.Fatalf("usage %v", usage)
+	for _, stored := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stored=%v", stored), func(t *testing.T) {
+			cfg := fakeConfig{AuthFail: true, Script: oneRound(finishRound), Result: map[string]any{"num_turns": 1, "terminal_reason": "api_error", "total_cost_usd": 0.5, "usage": errorUsage}}
+			if stored {
+				cfg.Auth = `{"loggedIn":true,"authMethod":"oauth_token","apiProvider":"firstParty"}`
+			}
+			h := newHarness(t, cfg)
+			opts := h.f.options()
+			if stored {
+				opts.Token = "sk-ant-oat01-SYNTHETIC-BAD"
+			}
+			s, err := h.start(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			_, err = s.Round(context.Background(), executor.Input{})
+			wantError(t, err, "executor/auth_refused")
+			ev := failedEvent(t, h)
+			if ev["reason"] != "auth_refused" || ev["num_turns"] != 1 || ev["subtype"] != "success" || ev["terminal_reason"] != "api_error" {
+				t.Fatalf("event %v", ev)
+			}
+			want := `{"cached":20,"cost_usd":0.5,"input":35,"model":"claude-sonnet-5-5","output":7,"reasoning":null,"source":"harness","state":"complete"}`
+			if got := jsonOf(ev["usage"]); got != want {
+				t.Fatalf("usage %s, want %s", got, want)
+			}
+		})
 	}
 }
 

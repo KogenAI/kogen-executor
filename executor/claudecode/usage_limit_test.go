@@ -16,6 +16,7 @@ func TestUsageLimitClassification(t *testing.T) {
 		{"assistant", "rate_limit", "", true, "executor/usage_limit"},
 		{"synthetic quota", "", "quota exceeded", true, "executor/usage_limit"},
 		{"warning then success", "rate_limit", "done", false, ""},
+		{"authentication warning then success", "authentication_failed", "done", false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, fakeConfig{Script: oneRound(finishRound), AssistantError: tc.assistant, Result: map[string]any{"is_error": tc.isError, "terminal_reason": "api_error", "result": tc.text}})
@@ -38,9 +39,9 @@ func TestUsageLimitOtherErrors(t *testing.T) {
 		cfg                   fakeConfig
 	}{
 		{"unfinished tool", "rate_limit", "executor/protocol", fakeConfig{UnfinishedTool: true, Result: map[string]any{"is_error": true, "terminal_reason": "api_error"}}},
-		{"auth diagnostic", "", "executor/failed", fakeConfig{Result: map[string]any{"is_error": true, "terminal_reason": "api_error", "result": "Failed to authenticate: rate limit"}}},
+		{"auth diagnostic", "", "executor/auth_refused", fakeConfig{Result: map[string]any{"is_error": true, "terminal_reason": "api_error", "result": "Failed to authenticate: rate limit"}}},
 		{"generic", "", "executor/failed", fakeConfig{Result: map[string]any{"is_error": true, "terminal_reason": "api_error"}}},
-		{"authentication", "authentication_failed", "executor/failed", fakeConfig{Result: map[string]any{"is_error": true, "terminal_reason": "api_error"}}},
+		{"authentication", "authentication_failed", "executor/auth_refused", fakeConfig{Result: map[string]any{"is_error": true, "terminal_reason": "api_error"}}},
 		{"overloaded", "overloaded", "executor/provider_unavailable", fakeConfig{Result: map[string]any{"is_error": true, "terminal_reason": "api_error"}}},
 		{"exit", "", "executor/failed", fakeConfig{NoResult: true, ExitCode: 1}},
 		{"malformed", "", "executor/protocol", fakeConfig{TrailingKind: "malformed"}},

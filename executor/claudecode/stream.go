@@ -494,10 +494,13 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 		return executor.RoundResult{}, executor.Fail(executor.ReasonProtocol, "the result has no boolean is_error flag")
 	}
 	terminal, _ := res["terminal_reason"].(string)
-	// `claude auth status` does not check a token against the server: an expired or revoked one
-	// only shows up here, as an assistant authentication_failed error or a 401 error result.
-	if s.a.opts.Token != "" && (r.authFailed || isErr && authFailedText(res["result"])) {
-		return executor.RoundResult{}, executor.Fail(executor.ReasonAuthRefused, tokenRefusedHint)
+	// `claude auth status` checks local state, not whether the server accepts the sign-in.
+	if isErr && (r.authFailed || authFailedText(res["result"])) {
+		detail := "Claude Code did not accept the sign-in; sign in again with `kogen provider login claude-code`"
+		if s.a.opts.Token != "" {
+			detail = tokenRefusedHint
+		}
+		return executor.RoundResult{}, executor.Fail(executor.ReasonAuthRefused, detail)
 	}
 
 	var ending executor.Ending
