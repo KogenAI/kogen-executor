@@ -35,6 +35,7 @@ type roundRun struct {
 	interrupted       bool
 
 	init      bool
+	modelSeen bool
 	model     string
 	ccVersion string
 
@@ -231,6 +232,8 @@ func (r *roundRun) addRateLimit(event map[string]any) {
 
 // gate is the per-round acceptance gate on the init event (audit section B).
 func (r *roundRun) gate(ev map[string]any) error {
+	r.modelSeen = true
+	r.model, _ = ev["model"].(string)
 	if src, _ := ev["apiKeySource"].(string); src != "none" {
 		return executor.Fail(executor.ReasonAuthRefused, "Claude Code reports its credential source as "+quoteBound(src)+", not the subscription sign-in (\"none\" API key); the round was stopped")
 	}
@@ -252,7 +255,6 @@ func (r *roundRun) gate(ev map[string]any) error {
 	if !r.procStarted.IsZero() {
 		r.initSeen, r.initAfter = true, r.received.Sub(r.procStarted)
 	}
-	r.model, _ = ev["model"].(string)
 	r.ccVersion, _ = ev["claude_code_version"].(string)
 	if r.ccVersion == "" {
 		r.ccVersion = r.s.version
@@ -601,9 +603,10 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 	event := map[string]any{
 		"event": "executor_round_ended", "role": s.role, "round": r.n, "ending": string(ending),
 		"usage": usageEvent(usage), "num_turns": turns,
-		"session_id": s.sessionID, "model": r.model, "claude_code_version": r.ccVersion,
+		"session_id": s.sessionID, "claude_code_version": r.ccVersion,
 		"terminal_reason": terminal, "deadline_remaining_ms": r.deadlineRemaining, "compactions": r.compactions,
 	}
+	r.addModels(event)
 	addModelUsage(event, res)
 	r.addDenials(event)
 	r.addRateLimit(event)
@@ -611,6 +614,14 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 	r.addPersistence(event)
 	s.emit(event)
 	return out, nil
+}
+
+// addModels projects this round's requested and observed models into terminal telemetry.
+func (r *roundRun) addModels(event map[string]any) {
+	event["requested_model"] = bound(r.s.a.redact(r.s.task.Model), 256)
+	if r.modelSeen {
+		event["model"] = bound(r.s.a.redact(r.model), 256)
+	}
 }
 
 // mapUsage maps the result's per-invocation usage the way Kogen maps Anthropic usage
