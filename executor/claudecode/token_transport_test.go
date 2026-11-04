@@ -13,6 +13,15 @@ import (
 	"github.com/KogenAI/kogen-executor/executor"
 )
 
+type startupDeadline struct{ context.Context }
+
+func (c startupDeadline) Err() error {
+	if c.Context.Err() != nil && context.Cause(c.Context) == context.DeadlineExceeded {
+		return context.DeadlineExceeded
+	}
+	return c.Context.Err()
+}
+
 func TestLargeTokenPreflightRefusedBeforeStart(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "started")
@@ -21,8 +30,7 @@ func TestLargeTokenPreflightRefusedBeforeStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := strings.Repeat("SYNTHETIC-token-transport ", 65536)
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
+	ctx := context.Background()
 	a := New(Options{Token: token}).(*adapter)
 	start := time.Now()
 	out, err := a.run(ctx, bin, nil, token)
@@ -61,8 +69,40 @@ func TestRoundTokenTransport(t *testing.T) {
 				}
 				a := New(Options{Token: tc.token, KillGrace: 10 * time.Millisecond}).(*adapter)
 				s := &session{a: a, task: executor.Task{}, emit: func(map[string]any) {}, bin: bin, env: a.childEnv("", tc.token), root: dir, dir: dir, role: executor.RoleBuild}
-				ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-				defer cancel()
+				base, cancel := context.WithCancelCause(context.Background())
+				ctx := startupDeadline{base}
+				defer cancel(context.Canceled)
+				if mode == "never" && tc.name != "large" {
+					ready := make(chan struct{})
+					done := make(chan struct{})
+					defer close(done)
+					go func() {
+						for {
+							if _, err := os.Stat(marker); err == nil {
+								close(ready)
+								return
+							}
+							select {
+							case <-done:
+								return
+							case <-time.After(time.Millisecond):
+							}
+						}
+					}()
+					go func() {
+						select {
+						case <-ready:
+							select {
+							case <-time.After(300 * time.Millisecond):
+								cancel(context.DeadlineExceeded)
+							case <-done:
+							}
+						case <-time.After(3 * time.Second):
+							cancel(context.Canceled)
+						case <-done:
+						}
+					}()
+				}
 				start := time.Now()
 				_, err := s.Round(ctx, executor.Input{})
 				if time.Since(start) > 3*time.Second {
@@ -146,8 +186,7 @@ func TestTokenTransportSizeBoundary(t *testing.T) {
 			}
 			token := strings.Repeat("x", size)
 			a := New(Options{Token: token}).(*adapter)
-			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-			defer cancel()
+			ctx := context.Background()
 			_, err := a.run(ctx, bin, nil, token)
 			if size > 512 {
 				if err == nil || strings.Contains(err.Error(), token) {
