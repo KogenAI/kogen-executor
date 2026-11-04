@@ -56,7 +56,7 @@ go build ./... && go vet ./... && go test -race -count=1 ./...
 
 ### Updating the golden files
 
-`agent/testdata/prompts_golden.json` records the byte count and SHA-256 of each shared prompt (the testing rules); the phases' own prompts and tool definitions are recorded by the phases that own them. A plain run fails on any drift and writes nothing. The test-only flag `-update` rewrites it from the current output:
+`agent/testdata/prompts_golden.json` records the byte count and SHA-256 of each shared prompt (the testing rules); the phases' own prompts and tool definitions are recorded by the phases that own them. `contract/testdata/loop_knobs_golden.json` records complete serialized generic-agent request bodies rendered for Responses, Messages and Chat Completions. Phase-owned tools are outside these snapshots. A plain run fails on any drift and writes nothing. The test-only flag `-update` rewrites the goldens from the current output:
 
 ```sh
 go test ./... -update
@@ -64,9 +64,9 @@ go test ./... -update
 
 The flag exists only in test binaries; the `kogen` program has no such option.
 
-Use it only after an intended change to a shared prompt changes the golden, or to resolve a merge or cherry-pick conflict in a golden by regenerating it on the combined tree. Never use it to make an unexplained failure pass.
+Use it only after an intended change to a shared prompt or generic-tool request changes its golden, or to resolve a merge or cherry-pick conflict in a golden by regenerating it on the combined tree. Never use it to make an unexplained failure pass.
 
-Review the diff of the regenerated golden: a change to `prompts_golden.json` must be deliberate, because it records the prompt bytes Kogen's models have always received. Then run the full checks again without the flag.
+Review the diff of the regenerated golden: a change to `prompts_golden.json` must be deliberate, because it records the prompt bytes Kogen's models have always received. Changes to `loop_knobs_golden.json` must likewise be deliberate: review the complete request body diffs alongside the paired consumer items `cli/research_removal_test.go` and `cli/testdata/loop_knobs_golden.json` in kogen. Then run the full checks again without the flag.
 
 ### Contract suite
 
