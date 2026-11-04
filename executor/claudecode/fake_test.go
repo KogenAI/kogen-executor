@@ -34,8 +34,9 @@ func TestMain(m *testing.M) {
 
 // fakeConfig scripts one fake claude installation.
 type fakeConfig struct {
-	Script conformance.Script `json:"script"`
-	State  string             `json:"state"`
+	Script      conformance.Script `json:"script"`
+	State       string             `json:"state"`
+	RoundEvents [][]map[string]any `json:"round_events"`
 	// Version is the `claude --version` output (default "2.1.312 (Claude Code)").
 	Version string `json:"version"`
 	// Auth is the raw `auth status --json` output (default: signed in with claude.ai).
@@ -199,6 +200,11 @@ func fakeClaude(cfgPath string, args []string) int {
 	}
 	merge(init, cfg.Init)
 	out(init)
+	if n <= len(cfg.RoundEvents) {
+		for _, event := range cfg.RoundEvents[n-1] {
+			out(event)
+		}
+	}
 	if rs.APIKeyAuth {
 		time.Sleep(time.Second) // the adapter must have killed us before we act
 	}

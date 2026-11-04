@@ -40,8 +40,9 @@ type roundRun struct {
 
 	hookLog sentinelLog
 
-	lines  int
-	result map[string]any // the result event, once seen
+	lines       int
+	compactions int
+	result      map[string]any // the result event, once seen
 
 	authFailed     bool // an assistant event carried error authentication_failed
 	overloaded     bool
@@ -143,6 +144,17 @@ func (r *roundRun) lineReceived(b, received []byte) error {
 		case "init":
 			return r.gate(ev)
 		case "hook_started", "hook_response", "plugin_install":
+		case "compact_boundary":
+			metadata, _ := ev["compact_metadata"].(map[string]any)
+			trigger, _ := metadata["trigger"].(string)
+			if trigger != "" {
+				var preTokens any
+				if n := countPtr(metadata["pre_tokens"]); n != nil {
+					preTokens = *n
+				}
+				r.compactions++
+				r.s.emit(map[string]any{"event": "executor_context_compacted", "role": r.s.role, "round": r.n, "trigger": trigger, "pre_tokens": preTokens})
+			}
 		default:
 			r.ignore(typ, sub)
 		}
@@ -545,7 +557,7 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 		"event": "executor_round_ended", "role": s.role, "round": r.n, "ending": string(ending),
 		"usage": usageEvent(usage), "num_turns": turns, "permission_denials": denials,
 		"session_id": s.sessionID, "model": r.model, "claude_code_version": r.ccVersion,
-		"terminal_reason": terminal, "deadline_remaining_ms": r.deadlineRemaining,
+		"terminal_reason": terminal, "deadline_remaining_ms": r.deadlineRemaining, "compactions": r.compactions,
 	}
 	r.addRateLimit(event)
 	r.addProfile(event)
