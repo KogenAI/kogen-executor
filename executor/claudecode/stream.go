@@ -588,10 +588,6 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 	}
 
 	usage := s.mapUsage(res, r.model)
-	denials := 0
-	if d, ok := res["permission_denials"].([]any); ok {
-		denials = len(d)
-	}
 	if r.model != "" {
 		s.model = r.model
 	}
@@ -599,10 +595,11 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 	out := executor.RoundResult{Ending: ending, Claim: claim, Structured: structured, Blocker: blocker, Usage: usage, Handle: h}
 	event := map[string]any{
 		"event": "executor_round_ended", "role": s.role, "round": r.n, "ending": string(ending),
-		"usage": usageEvent(usage), "num_turns": turns, "permission_denials": denials,
+		"usage": usageEvent(usage), "num_turns": turns,
 		"session_id": s.sessionID, "model": r.model, "claude_code_version": r.ccVersion,
 		"terminal_reason": terminal, "deadline_remaining_ms": r.deadlineRemaining, "compactions": r.compactions,
 	}
+	r.addDenials(event)
 	r.addRateLimit(event)
 	r.addProfile(event)
 	s.emit(event)
@@ -662,6 +659,7 @@ func (r *roundRun) addResult(event map[string]any) {
 	if res == nil {
 		return
 	}
+	r.addDenials(event)
 	_, hasUsage := res["usage"].(map[string]any)
 	_, hasCost := res["total_cost_usd"].(json.Number)
 	if hasUsage || hasCost {
@@ -676,6 +674,40 @@ func (r *roundRun) addResult(event map[string]any) {
 			event[k] = v
 		}
 	}
+}
+
+// addDenials projects the already redacted result into bounded terminal telemetry.
+func (r *roundRun) addDenials(event map[string]any) {
+	d, ok := r.result["permission_denials"].([]any)
+	event["permission_denials"] = len(d)
+	if !ok {
+		return
+	}
+	calls := make([]any, 0, min(len(d), 32))
+	var env []string
+	if r.s.a != nil {
+		env = secretEnvValues(r.s.a.opts.Env)
+	}
+	for _, entry := range d {
+		obj, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, ok := obj["tool_name"].(string)
+		if !ok || name == "" {
+			continue
+		}
+		if len(calls) == 32 {
+			break
+		}
+		call := map[string]any{"name": processValue(name, env), "arguments": r.s.toolArguments(obj["tool_input"])}
+		if id, ok := obj["tool_use_id"].(string); ok {
+			call["tool_use_id"] = processValue(id, env)
+		}
+		calls = append(calls, call)
+	}
+	event["permission_denial_calls"] = calls
+	event["permission_denials_omitted"] = len(d) - len(calls)
 }
 
 func usageEvent(u executor.Usage) map[string]any {

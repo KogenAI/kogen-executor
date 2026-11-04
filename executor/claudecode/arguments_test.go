@@ -200,3 +200,11 @@ func TestToolArgumentsWholeBound(t *testing.T) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 }
+
+func TestToolArgumentsSecretJSONKeys(t *testing.T) {
+	input := map[string]any{"api_key": "s3cret", "nested": []any{map[string]any{"password": 42, "ok": true, "count": json.Number("1.5")}}}
+	want := map[string]any{"api_key": "[redacted]", "nested": []any{map[string]any{"password": "[redacted]", "ok": true, "count": json.Number("1.5")}}}
+	if got := toolArguments(input, nil); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}

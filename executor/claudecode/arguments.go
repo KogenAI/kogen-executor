@@ -213,7 +213,11 @@ func processValue(v any, envValues []string) any {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, e := range x {
-			out[k] = processValue(e, envValues)
+			if secretNamed(k) {
+				out[k] = redactMark
+			} else {
+				out[k] = processValue(e, envValues)
+			}
 		}
 		return out
 	case []any:
