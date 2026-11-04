@@ -1,6 +1,8 @@
 package claudecode
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -31,6 +33,59 @@ func TestProtectedDropBounds(t *testing.T) {
 		}
 		if drops[0].Entry != "/outside/"+strings.Repeat("a", 246) {
 			t.Fatalf("bad UTF-8 boundary: %q", drops[0].Entry)
+		}
+	}
+}
+
+func TestProtectedSymlinkedRoot(t *testing.T) {
+	abs, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(abs, "real")
+	link := filepath.Join(abs, "link")
+	for _, d := range []string{filepath.Join(real, "a"), filepath.Join(real, "c"), filepath.Join(abs, "elsewhere")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for link, target := range map[string]string{
+		link:                         real,
+		filepath.Join(real, "inner"): "c",
+		filepath.Join(real, "out"):   filepath.Join(abs, "elsewhere"),
+		filepath.Join(abs, "up"):     abs,
+		filepath.Join(abs, "sub"):    filepath.Join(real, "c"),
+	} {
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for entry, want := range map[string]string{
+		link + "/a/b.txt":           "a/b.txt",
+		link + "/not-yet/created":   "not-yet/created",
+		real + "/inner/x":           "inner/x",
+		link + "/inner/x":           "inner/x",
+		real + "/out/f":             "out/f",
+		link + "/out/f":             "out/f",
+		abs + "/up/real/a/b.txt":    "a/b.txt",
+		abs + "/up/link/a/b.txt":    "a/b.txt",
+		abs + "/up/up/real/a/b.txt": "a/b.txt",
+		abs + "/sub/x":              "c/x",
+	} {
+		got, drops, _, fatal := classifyProtected(real, []string{entry})
+		if !reflect.DeepEqual(got, []string{want}) || len(drops) != 0 || fatal != nil {
+			t.Errorf("%s: got %v drops=%v fatal=%v, want %s", entry, got, drops, fatal, want)
+		}
+	}
+	for _, entry := range []string{abs + "/elsewhere/f", abs + "/nowhere/f"} {
+		got, drops, count, fatal := classifyProtected(real, []string{entry})
+		if len(got) != 0 || count != 1 || fatal != nil || !reflect.DeepEqual(drops, []protectedDrop{{entry, "outside_checkout"}}) {
+			t.Errorf("%s: got %v drops=%v fatal=%v", entry, got, drops, fatal)
+		}
+	}
+	for _, entry := range []string{link, abs + "/up", abs + "/up/link", abs + "/up/real", abs + "/up/up"} {
+		if _, _, _, fatal := classifyProtected(real, []string{entry}); fatal == nil || fatal.Entry != entry || fatal.Reason != "root_or_parent" {
+			t.Errorf("%s: fatal=%v", entry, fatal)
 		}
 	}
 }

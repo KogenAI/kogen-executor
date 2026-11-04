@@ -474,25 +474,9 @@ func classifyProtected(root string, paths []string) (out []string, dropped []pro
 		} else {
 			p = filepath.Clean(filepath.FromSlash(p))
 			if filepath.IsAbs(p) {
-				rel, err := filepath.Rel(root, p)
-				if err != nil {
-					reason = "outside_checkout"
-				} else {
-					p = rel
-				}
-			}
-			if reason == "" {
-				if p == "." {
-					reason = "root_or_parent"
-				} else if p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
-					reason = "root_or_parent"
-					for _, component := range strings.Split(p, string(filepath.Separator)) {
-						if component != ".." {
-							reason = "outside_checkout"
-							break
-						}
-					}
-				}
+				p, reason = classifyAbsolute(root, p)
+			} else {
+				reason = classifyRelative(p)
 			}
 		}
 		if reason == "" {
@@ -516,6 +500,61 @@ func classifyProtected(root string, paths []string) (out []string, dropped []pro
 		}
 	}
 	return out, dropped, count, nil
+}
+
+// classifyRelative reports why a cleaned path relative to the root is unusable, or "".
+func classifyRelative(p string) string {
+	if p == "." {
+		return "root_or_parent"
+	}
+	if p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
+		for _, component := range strings.Split(p, string(filepath.Separator)) {
+			if component != ".." {
+				return "outside_checkout"
+			}
+		}
+		return "root_or_parent"
+	}
+	return ""
+}
+
+// classifyAbsolute returns the root-relative form of a cleaned absolute entry and the reason it
+// is unusable, or "". An entry lexically outside the root is retried through its symlinks: the
+// remainder after the shortest leading prefix that resolves to the root keeps the entry's own
+// spelling; otherwise the fully resolved entry is compared with the root.
+func classifyAbsolute(root, p string) (string, string) {
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		return p, "outside_checkout"
+	}
+	reason := classifyRelative(rel)
+	if reason == "root_or_parent" || reason == "" {
+		return rel, reason
+	}
+	var prefixes []string
+	for q := p; ; {
+		prefixes = append(prefixes, q)
+		parent := filepath.Dir(q)
+		if parent == q {
+			break
+		}
+		q = parent
+	}
+	for i := len(prefixes) - 1; i >= 0; i-- {
+		if resolveReal(prefixes[i]) != root {
+			continue
+		}
+		rem, err := filepath.Rel(prefixes[i], p)
+		if err != nil {
+			break
+		}
+		return rem, classifyRelative(rem)
+	}
+	rel, err = filepath.Rel(root, resolveReal(p))
+	if err != nil {
+		return p, "outside_checkout"
+	}
+	return rel, classifyRelative(rel)
 }
 
 func writePrivate(path string, data []byte) error {
