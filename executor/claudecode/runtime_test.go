@@ -553,6 +553,73 @@ func TestDownloadIdleProgressAndStall(t *testing.T) {
 	}
 }
 
+type lateBody struct {
+	ctx  context.Context
+	data []byte
+	end  error
+}
+
+func (b *lateBody) Read(p []byte) (int, error) {
+	if len(b.data) > 0 {
+		n := copy(p, b.data)
+		b.data = b.data[n:]
+		return n, nil
+	}
+	<-b.ctx.Done()
+	return 0, b.end
+}
+
+func (b *lateBody) Close() error { return nil }
+
+type lateTransport struct {
+	data []byte
+	end  error
+}
+
+func (t lateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: 200, Status: "200 OK", ContentLength: -1, Header: http.Header{}, Body: &lateBody{r.Context(), t.data, t.end}, Request: r}, nil
+}
+
+// An expired idle timer is a stall only for a copy error or a short body; a complete body whose
+// clean end arrives after the expiry continues through the ordinary checks.
+func TestDownloadLateEndAfterIdleExpiry(t *testing.T) {
+	body := script(Version, filepath.Join(t.TempDir(), "runs"))
+	want := pin{sha256: sum(body), size: int64(len(body))}
+	for _, tc := range []struct {
+		name    string
+		data    []byte
+		end     error
+		stalled bool
+	}{
+		{"complete, clean end", body, io.EOF, false},
+		{"complete, read error", body, errors.New("reset"), true},
+		{"short, clean end", body[:len(body)/2], io.EOF, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := http.DefaultClient
+			http.DefaultClient = &http.Client{Transport: lateTransport{tc.data, tc.end}}
+			defer func() { http.DefaultClient = old }()
+			a := installer(t.TempDir(), nil)
+			a.setDownloadIdleTimeoutForTest(200 * time.Millisecond)
+			file := filepath.Join(t.TempDir(), "claude")
+			digest, retry, err := a.downloadBinary(context.Background(), "http://127.0.0.1:9/claude", file, want)
+			if retry {
+				t.Fatalf("retry: %v", err)
+			}
+			if !tc.stalled {
+				got, e := os.ReadFile(file)
+				if err != nil || digest != want.sha256 || e != nil || !bytes.Equal(got, body) {
+					t.Fatalf("digest %q err %v read %v", digest, err, e)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "connection stalled") {
+				t.Fatalf("%v", err)
+			}
+		})
+	}
+}
+
 func TestDownloadRetryTimingAndFreshBody(t *testing.T) {
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprint(mismatch), func(t *testing.T) {

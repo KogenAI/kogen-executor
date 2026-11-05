@@ -409,7 +409,7 @@ func (a *adapter) downloadBinary(ctx context.Context, source, file string, want 
 	if ctx.Err() != nil {
 		return "", false, classify(ctx)
 	}
-	if stalled {
+	if stalled && (copyErr != nil || n < want.size) {
 		return "", false, fail("connection stalled")
 	}
 	if writer.err != nil {
