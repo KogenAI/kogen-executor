@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // HookSubcommand is the hidden Kogen subcommand that production wires to RunHook:
@@ -327,9 +329,10 @@ func resolveReal(p string) string {
 	return p
 }
 
-// within reports whether target is base or below it. Components compare case-insensitively:
-// the usual macOS volume does not distinguish case, and over-denying a differently cased name
-// on other systems is the safe side of a best-effort prevention.
+// within reports whether target is base or below it. Components compare case-insensitively
+// and across Unicode canonical normalization (see sameComponent): the usual macOS volume
+// distinguishes neither, and over-denying such a name on other systems is the safe side of a
+// best-effort prevention.
 func within(base, target string) bool {
 	_, ok := relUnder(base, target)
 	return ok
@@ -342,11 +345,30 @@ func relUnder(base, target string) (string, bool) {
 		return "", false
 	}
 	for i := range b {
-		if !strings.EqualFold(b[i], t[i]) {
+		if !sameComponent(b[i], t[i]) {
 			return "", false
 		}
 	}
 	return strings.Join(t[len(b):], "/"), true
+}
+
+// sameComponent reports whether two path components name the same file on a case- and
+// normalization-insensitive volume. A pair that is pure ASCII on both sides is compared with
+// strings.EqualFold alone and never normalized.
+func sameComponent(a, b string) bool {
+	if isASCII(a) && isASCII(b) {
+		return strings.EqualFold(a, b)
+	}
+	return strings.EqualFold(norm.NFC.String(a), norm.NFC.String(b))
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 func splitPath(p string) []string {
@@ -361,7 +383,7 @@ func splitPath(p string) []string {
 
 func hasGitComponent(rel string) bool {
 	for _, c := range strings.Split(rel, "/") {
-		if strings.EqualFold(c, ".git") {
+		if sameComponent(c, ".git") {
 			return true
 		}
 	}

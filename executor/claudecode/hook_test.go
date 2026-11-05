@@ -3,6 +3,7 @@ package claudecode
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -260,5 +261,86 @@ func TestSentinelLogAppendsAndIsPrivate(t *testing.T) {
 	var other sentinelLog
 	if recs, _ := other.read(h.log, "other"); len(recs) != 0 {
 		t.Fatal("a record of another nonce counted")
+	}
+}
+
+func TestPreToolUnicodeNormalization(t *testing.T) {
+	t.Parallel()
+	const (
+		nfc = "café"
+		nfd = "café"
+	)
+	h := newHookEnv(t, nfc+".txt", "dép/")
+	cases := []struct {
+		name, path string
+		deny       bool
+		reason     string
+	}{
+		{"decomposed call to composed entry", nfd + ".txt", true, "(" + nfc + ".txt)"},
+		{"composed call to composed entry", nfc + ".txt", true, "(" + nfc + ".txt)"},
+		{"mixed case with the other form", "CAFÉ.TXT", true, "(" + nfc + ".txt)"},
+		{"ASCII look-alike", "cafe.txt", false, ""},
+		{"different accent", "cafè.txt", false, ""},
+		{"suffix sibling", nfd + ".txt.bak", false, ""},
+		{"directory, decomposed", "dép/file.go", true, "(dép/)"},
+		{"directory, upper case", "DÉP/sub/x.go", true, "(dép/)"},
+		{"directory ASCII look-alike", "dep/file.go", false, ""},
+		{"directory prefix sibling", "dépot/file.go", false, ""},
+	}
+	for i, c := range cases {
+		code, out := h.pre("Write", "file_path", filepath.Join(h.root, c.path), fmt.Sprintf("u%d", i))
+		if code != 0 || strings.Contains(out, "deny") != c.deny || !strings.Contains(out, c.reason) {
+			t.Errorf("%s: %d %q", c.name, code, out)
+		}
+	}
+
+	// The reverse: a decomposed entry against composed calls.
+	r := newHookEnv(t, nfd+".txt")
+	if code, out := r.pre("Write", "file_path", filepath.Join(r.root, nfc+".txt"), "r1"); code != 0 || !strings.Contains(out, "deny") || !strings.Contains(out, nfd+".txt") {
+		t.Errorf("composed call to decomposed entry: %d %q", code, out)
+	}
+
+	// The sentinel keeps the call's own spelling.
+	b, err := os.ReadFile(h.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), filepath.Join(h.root, nfd+".txt")) {
+		t.Errorf("sentinel lost the call's spelling: %s", b)
+	}
+}
+
+func TestPreToolUnicodeNormalizationRoot(t *testing.T) {
+	t.Parallel()
+	const (
+		nfc = "ré"
+		nfd = "ré"
+	)
+	tmp := t.TempDir()
+	if r, err := filepath.EvalSymlinks(tmp); err == nil {
+		tmp = r
+	}
+	root := filepath.Join(tmp, nfc)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := &hookEnv{t: t, root: root, policy: filepath.Join(tmp, "policy.json"), log: filepath.Join(tmp, "hook-log.jsonl")}
+	b, _ := json.Marshal(policy{Root: root, Protected: []string{"top.txt"}, Log: h.log, Nonce: "n1"})
+	if err := os.WriteFile(h.policy, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(tmp, nfd)
+	for i, c := range []struct {
+		path, reason string
+	}{
+		{filepath.Join(other, "notes.txt"), ""},
+		{filepath.Join(other, "top.txt"), "protected path"},
+		{filepath.Join(other, ".git", "config"), ".git"},
+		{filepath.Join(tmp, "re", "notes.txt"), "outside the checkout"},
+	} {
+		code, out := h.pre("Write", "file_path", c.path, fmt.Sprintf("v%d", i))
+		if code != 0 || (c.reason == "") != (out == "") || !strings.Contains(out, c.reason) {
+			t.Errorf("%s: %d %q", c.path, code, out)
+		}
 	}
 }
