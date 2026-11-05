@@ -13,7 +13,7 @@ Feature: Canonical loop module wiring
     Then k-executor-loop-module-path: command succeeds
       """
       set +e
-      grep -rn "\"kogen-loop/" --include=*.go .
+      grep -rn "\"kogen-loop/" --include=*.go --include=*.go.txt .
       result=$?
       set -e
       test "$result" = 1
