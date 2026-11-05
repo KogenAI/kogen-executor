@@ -86,6 +86,7 @@ type adapter struct {
 	downloadIdle       time.Duration
 	downloadHeader     time.Duration
 	downloadRetryDelay time.Duration
+	sync               func(*os.File) error
 }
 
 // Describe reports the executor's capabilities and exact version. It never fails: an

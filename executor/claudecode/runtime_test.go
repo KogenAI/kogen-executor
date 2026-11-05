@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -786,5 +787,105 @@ func TestDownloadHeaderTimeoutYieldsToCallerDeadline(t *testing.T) {
 	wantError(t, err, "executor/deadline")
 	if strings.Contains(err.Error(), "did not answer") {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestInstallNamesALocalCreateFailure(t *testing.T) {
+	binary := script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs"))
+	home := t.TempDir()
+	s := newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
+		// A directory at the partial file's path makes the open fail.
+		partial, _ := filepath.Glob(filepath.Join(Root(home), ".partial-*"))
+		for _, p := range partial {
+			os.Mkdir(filepath.Join(p, "claude"), 0o700)
+		}
+		w.Header().Set("Content-Length", fmt.Sprint(len(b)))
+		w.Write(b)
+	})
+	var stderr bytes.Buffer
+	err := installer(home, &stderr).ensureRuntime(context.Background())
+	e := wantError(t, err, "executor/unavailable")
+	partial, _ := filepath.Glob(filepath.Join(Root(home), ".partial-*"))
+	if len(partial) != 0 {
+		t.Fatalf("partial directories %v", partial)
+	}
+	if !strings.HasPrefix(e.Detail, "local write failure: cannot create "+Root(home)+"/.partial-") || !strings.HasSuffix(e.Detail, "/claude: is a directory; nothing was installed") || strings.Contains(e.Detail, "cannot download") || strings.Contains(e.Detail, s.URL) {
+		t.Fatalf("detail %q", e.Detail)
+	}
+	if s.downloads.Load() != 1 || strings.Contains(stderr.String(), "download attempt") {
+		t.Fatalf("downloads %d, stderr %q", s.downloads.Load(), stderr.String())
+	}
+	if _, err := os.Lstat(RuntimeDir(home)); err == nil {
+		t.Fatal("something was installed")
+	}
+}
+
+func TestInstallFlushesTheFileBeforeAndTheRootAfterPublication(t *testing.T) {
+	binary := script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs"))
+	newSeam(t, binary, "", nil)
+	home := t.TempDir()
+	var steps []string
+	a := installer(home, nil)
+	a.setSyncForTest(func(f *os.File) error {
+		st, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		_, pubErr := os.Lstat(RuntimeDir(home))
+		if st.IsDir() {
+			steps = append(steps, fmt.Sprintf("dir %s published=%t", f.Name(), pubErr == nil))
+		} else {
+			steps = append(steps, fmt.Sprintf("file %d published=%t", st.Size(), pubErr == nil))
+		}
+		return f.Sync()
+	})
+	if err := a.ensureRuntime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("file %d published=false|dir %s published=true", len(binary), Root(home))
+	if got := strings.Join(steps, "|"); got != want {
+		t.Fatalf("flushes %q, want %q", got, want)
+	}
+}
+
+func TestInstallFileFlushFailureIsUnpublishedAndNotRetried(t *testing.T) {
+	binary := script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs"))
+	s := newSeam(t, binary, "", nil)
+	home := t.TempDir()
+	a := installer(home, nil)
+	a.setSyncForTest(func(f *os.File) error { return errors.New("injected sync failure") })
+	e := wantError(t, a.ensureRuntime(context.Background()), "executor/unavailable")
+	if !strings.HasPrefix(e.Detail, "cannot flush "+Root(home)+"/.partial-") || !strings.HasSuffix(e.Detail, "/claude to disk: injected sync failure; nothing was installed") {
+		t.Fatalf("detail %q", e.Detail)
+	}
+	if s.downloads.Load() != 1 {
+		t.Fatalf("downloads %d", s.downloads.Load())
+	}
+	if names := entries(t, Root(home)); strings.Join(names, " ") != "config install.lock" {
+		t.Fatalf("entries %v", names)
+	}
+}
+
+func TestInstallRootFlushFailureRemovesThePublishedDirectory(t *testing.T) {
+	binary := script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs"))
+	newSeam(t, binary, "", nil)
+	home := t.TempDir()
+	var stderr bytes.Buffer
+	a := installer(home, &stderr)
+	a.setSyncForTest(func(f *os.File) error {
+		if st, err := f.Stat(); err == nil && st.IsDir() {
+			return errors.New("injected sync failure")
+		}
+		return f.Sync()
+	})
+	e := wantError(t, a.ensureRuntime(context.Background()), "executor/unavailable")
+	if want := "cannot flush " + Root(home) + " to disk: injected sync failure; nothing was installed"; e.Detail != want {
+		t.Fatalf("detail %q, want %q", e.Detail, want)
+	}
+	if strings.Contains(stderr.String(), "kogen: installed") {
+		t.Fatalf("stderr %q", stderr.String())
+	}
+	if names := entries(t, Root(home)); strings.Join(names, " ") != "config install.lock" {
+		t.Fatalf("entries %v", names)
 	}
 }

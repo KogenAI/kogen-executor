@@ -44,6 +44,43 @@ func (a *adapter) setDownloadIdleTimeoutForTest(d time.Duration) { a.downloadIdl
 
 func (a *adapter) setDownloadHeaderTimeoutForTest(d time.Duration) { a.downloadHeader = d }
 
+func (a *adapter) setSyncForTest(sync func(*os.File) error) { a.sync = sync }
+
+// syncFile flushes f to stable storage.
+func (a *adapter) syncFile(f *os.File) error {
+	if a.sync != nil {
+		return a.sync(f)
+	}
+	return f.Sync()
+}
+
+// cause is the system's wording of a failed file operation.
+func cause(err error) string {
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return pe.Err.Error()
+	}
+	return err.Error()
+}
+
+// localWriteFailure is the refusal of a failed create, write or close of the partial file.
+func localWriteFailure(action, file string, err error) error {
+	return unavailable("local write failure: cannot " + action + " " + file + ": " + cause(err) + "; nothing was installed")
+}
+
+// flushFile opens path and flushes it to stable storage, then closes it.
+func (a *adapter) flushFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	err = a.syncFile(f)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
 // doBounded sends req, whose context is cancelled by cancel, and gives up with
 // "the server did not answer" when the complete response headers do not arrive within the
 // header bound. A cancellation from the caller's ctx is never reported as that failure.
@@ -317,6 +354,13 @@ func (a *adapter) install(ctx context.Context) error {
 		return unavailable("cannot install Claude Code " + Version + " into " + dir + ": " + err.Error() + "; remove " + dir + " and run again")
 	}
 	installed = true
+	if err := a.flushFile(root); err != nil {
+		detail := "cannot flush " + root + " to disk: " + cause(err)
+		if rerr := os.RemoveAll(dir); rerr != nil {
+			return unavailable(detail + ": " + cause(rerr) + "; remove " + dir + " and run again")
+		}
+		return unavailable(detail + "; nothing was installed")
+	}
 	fmt.Fprintf(a.stderr(), "kogen: installed Claude Code %s (sha256 %s)\n", Version, digest)
 	return nil
 }
@@ -350,7 +394,7 @@ func (a *adapter) downloadBinary(ctx context.Context, source, file string, want 
 	}
 	out, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o700)
 	if err != nil {
-		return "", false, unavailable("cannot create " + file + ": " + err.Error())
+		return "", false, localWriteFailure("create", file, err)
 	}
 	idle := a.downloadIdle
 	if idle == 0 {
@@ -369,10 +413,10 @@ func (a *adapter) downloadBinary(ctx context.Context, source, file string, want 
 		return "", false, fail("connection stalled")
 	}
 	if writer.err != nil {
-		return "", false, fail(writer.err.Error())
+		return "", false, localWriteFailure("write", file, writer.err)
 	}
 	if closeErr != nil {
-		return "", false, fail(closeErr.Error())
+		return "", false, localWriteFailure("close", file, closeErr)
 	}
 	if copyErr != nil {
 		return "", true, fail(copyErr.Error())
@@ -386,6 +430,9 @@ func (a *adapter) downloadBinary(ctx context.Context, source, file string, want 
 	}
 	if digest != want.sha256 {
 		return "", false, unavailable("the downloaded Claude Code " + Version + " does not match its pinned SHA-256; nothing was installed")
+	}
+	if err := a.flushFile(file); err != nil {
+		return "", false, unavailable("cannot flush " + file + " to disk: " + cause(err) + "; nothing was installed")
 	}
 	return digest, false, nil
 }
