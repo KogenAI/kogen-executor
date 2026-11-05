@@ -28,6 +28,7 @@ type roundRun struct {
 	streamLostBytes, streamLostLines, stderrLostBytes int64
 	artifact                                          string
 	keptBytes                                         int64
+	persistFailed                                     bool // a retained artifact failed to persist; a successful result must not be reported
 
 	s                 *session
 	n                 int
@@ -715,6 +716,9 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 		return executor.RoundResult{}, err
 	}
 
+	if r.persistFailed {
+		return executor.RoundResult{}, errArtifactWrite
+	}
 	usage := s.mapUsage(res, r.model)
 	if r.model != "" {
 		s.model = r.model

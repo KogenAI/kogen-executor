@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-executor/executor/conformance"
@@ -294,5 +295,85 @@ func TestSuccessfulStderrEvidenceBytes(t *testing.T) {
 	}
 	if strings.Contains(string(b), token) || !strings.Contains(string(b), "before "+redactMark+" after") {
 		t.Fatalf("stream %q", b)
+	}
+}
+
+// A round's own failure survives a later persistence failure; only a round that would
+// otherwise have succeeded is failed by the artifact, which the event still names.
+func TestRoundFailureOutranksPersistenceFailure(t *testing.T) {
+	full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
+	if err != nil {
+		t.Skipf("/dev/full is not writable on this platform: %v", err)
+	}
+	full.Close()
+	sleeping := conformance.RoundScript{Actions: []conformance.Action{{Shell: "sleep 30"}}, End: "finish"}
+	for _, tc := range []struct {
+		name, role, want, detail string
+		cfg                      fakeConfig
+		ctx                      func() (context.Context, context.CancelFunc)
+	}{
+		{"deadline", executor.RoleBuild, "executor/deadline", "the Build deadline passed; Claude Code and its processes were stopped",
+			fakeConfig{Script: oneRound(sleeping), Init: tokenInitEvent, Auth: goodAuth},
+			func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 500*time.Millisecond)
+			}},
+		{"interrupted", executor.RoleBuild, "executor/interrupted", "the round was interrupted; Claude Code and its processes were stopped",
+			fakeConfig{Script: oneRound(sleeping), Init: tokenInitEvent, Auth: goodAuth},
+			func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				time.AfterFunc(500*time.Millisecond, cancel)
+				return ctx, cancel
+			}},
+		{"protocol", executor.RoleBuild, "executor/protocol", `Claude Code reports permission mode "default", not acceptEdits`,
+			fakeConfig{Script: oneRound(finishRound), Init: map[string]any{"permissionMode": "default"}, Auth: goodAuth}, nil},
+		{"usage limit", executor.RoleBuild, "executor/usage_limit", `Claude Code reported an error result: subtype "success", terminal reason "api_error"`,
+			fakeConfig{Script: oneRound(finishRound), Init: tokenInitEvent, Auth: goodAuth, AssistantError: "rate_limit",
+				Result: map[string]any{"is_error": true, "terminal_reason": "api_error"}}, nil},
+		{"schema", executor.RoleReview, "executor/protocol", "the final success result of the review role has no structured_output object",
+			fakeConfig{Script: oneRound(finishRound), Init: tokenInitEvent, Auth: goodAuth}, nil},
+		{"success", executor.RoleBuild, "executor/failed", "cannot persist round-1.stderr after 0 bytes",
+			fakeConfig{Script: oneRound(finishRound), Init: tokenInitEvent, Auth: goodAuth}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := roleHarness(t, tc.role, tc.cfg)
+			o := h.f.options()
+			o.Token = "a-long-synthetic-token-for-the-buffer"
+			s, err := h.start(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			ss := s.(*session)
+			wrapper := filepath.Join(t.TempDir(), "wrapper")
+			script := "#!/bin/sh\nprintf x >&2\nexec '" + ss.bin + "' \"$@\"\n"
+			if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			ss.bin = wrapper
+			if err := os.Symlink("/dev/full", filepath.Join(h.task.Dir, "round-1.stderr")); err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if tc.ctx != nil {
+				var cancel context.CancelFunc
+				ctx, cancel = tc.ctx()
+				defer cancel()
+			}
+			_, err = s.Round(ctx, executor.Input{})
+			e := wantError(t, err, tc.want)
+			if e.Detail != tc.detail {
+				t.Fatalf("detail %q", e.Detail)
+			}
+			ev := h.eventsNamed("executor_round_failed")
+			reason := strings.TrimPrefix(tc.want, "executor/")
+			if len(ev) != 1 || ev[0]["reason"] != reason || ev[0]["detail"] != tc.detail || ev[0]["artifact"] != "round-1.stderr" ||
+				ev[0]["kept_bytes"] != int64(0) || len(h.eventsNamed("executor_round_ended")) != 0 {
+				t.Fatalf("events %v", h.events)
+			}
+			_, err = s.Round(context.Background(), executor.Input{Feedback: "again"})
+			if err == nil {
+				t.Fatal("the session accepted a round after the failure")
+			}
+		})
 	}
 }

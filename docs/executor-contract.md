@@ -54,10 +54,14 @@ such a failure. Under the cap and without a failed write these fields and marker
 are absent.
 
 A failed or short write to either artifact, including a truncation marker or the
-final stderr redactor flush, fails the round with `executor/failed` rather than
-emitting `executor_round_ended`. The terminal `executor_round_failed` event has
-`artifact` (the basename `round-N.jsonl` or `round-N.stderr`) and `kept_bytes`
-(the integer count actually written, including any marker bytes). The error
-identifies only that basename and byte count, not artifact content or the I/O
-error text. Stderr is drained and the process group cleaned up before return.
+final stderr redactor flush, fails a round that would otherwise succeed with
+`executor/failed` rather than emitting `executor_round_ended`. When the round
+already fails for another reason (for example a deadline, an interruption, a
+protocol error, a usage limit or a missing structured submission), that
+failure's reason and detail are kept. The terminal `executor_round_failed` event
+has `artifact` (the basename `round-N.jsonl` or `round-N.stderr`) and
+`kept_bytes` (the integer count actually written, including any marker bytes)
+either way. The `executor/failed` error identifies only that basename and byte
+count, not artifact content or the I/O error text. Stderr is drained and the
+process group cleaned up before return.
 This is not an fsync durability guarantee.

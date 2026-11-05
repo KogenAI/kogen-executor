@@ -187,6 +187,10 @@ func (a *adapter) FirstPromptBytes(role string, brief executor.Brief) int {
 	return len(constraintsFor(role)) + len(promptSep) + len(brief.Stable) + len(promptSep) + len(brief.Dynamic)
 }
 
+// errArtifactWrite is the adapter's own detection of a failed retained-artifact write; the
+// deferred block of runRound names the artifact.
+var errArtifactWrite = executor.Fail(executor.ReasonFailed, "artifact write failed")
+
 func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundRun) (result executor.RoundResult, roundErr error) {
 	if ctx.Err() != nil {
 		return executor.RoundResult{}, rr.classifyContext(ctx)
@@ -262,7 +266,9 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 		} else if stderrFile.err != nil {
 			rr.artifact, rr.keptBytes = filepath.Base(errPath), stderrFile.kept
 		}
-		if rr.artifact != "" {
+		// The failed artifact decides the error only when the round would otherwise have
+		// succeeded or its only failure is the detection of that write; any other failure stays.
+		if rr.artifact != "" && (roundErr == nil || roundErr == error(errArtifactWrite)) {
 			result = executor.RoundResult{}
 			roundErr = executor.Fail(executor.ReasonFailed, "cannot persist "+rr.artifact+" after "+strconv.FormatInt(rr.keptBytes, 10)+" bytes")
 		}
@@ -370,7 +376,7 @@ loop:
 	for {
 		select {
 		case <-stderrFailed:
-			return fail(executor.Fail(executor.ReasonFailed, "artifact write failed"))
+			return fail(errArtifactWrite)
 		case <-ctx.Done():
 			terminateGroup(pgid, exited, s.a.opts.KillGrace)
 			return executor.RoundResult{}, rr.classifyContext(ctx)
@@ -401,7 +407,7 @@ loop:
 				streamFile.Write([]byte{'\n'})
 				streamKept = streamFile.kept
 				if streamFile.err != nil {
-					return fail(executor.Fail(executor.ReasonFailed, "artifact write failed"))
+					return fail(errArtifactWrite)
 				}
 			}
 			if err := rr.lineReceived(line, m.line); err != nil {
@@ -456,9 +462,8 @@ loop:
 		exit = -1
 	}
 	finalize()
-	if streamFile.err != nil || stderrFile.err != nil {
-		return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "artifact write failed")
-	}
+	// The result is classified even when an artifact failed: its own failure outranks the write.
+	rr.persistFailed = streamFile.err != nil || stderrFile.err != nil
 	result, err = rr.finish(exit, killed, errPath)
 	if e, ok := sys.AsError(err); ok && e.Class == "executor" && e.Reason == executor.ReasonUsageLimit && groupAlive(pgid) {
 		return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "Claude Code process group did not exit; continuation is unsafe")
