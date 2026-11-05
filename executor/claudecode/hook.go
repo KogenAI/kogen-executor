@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -32,6 +34,17 @@ type policy struct {
 	// ArtifactDir is the executor artifact directory (resolved) when it is the checkout, inside
 	// it or a parent of it. File tools may not write to it: it holds this policy and the hook log.
 	ArtifactDir string `json:"artifact_dir,omitempty"`
+	// ProtectedIDs are the identities of the protected regular files that existed when Start wrote
+	// the policy, in walk order. The hook compares them with a call target that has several links.
+	ProtectedIDs []fileID `json:"protected_ids,omitempty"`
+}
+
+// fileID is the (device, inode) identity of one protected regular file, naming the policy entry
+// (the file itself, or the protected directory holding it).
+type fileID struct {
+	Entry string `json:"entry"`
+	Dev   uint64 `json:"dev"`
+	Ino   uint64 `json:"ino"`
 }
 
 // sentinel is one hook log record: proof the hook ran for a tool call, written BEFORE the hook
@@ -195,7 +208,85 @@ func decide(pol policy, cwd, raw string) (allow bool, reason, resolved string) {
 			}
 		}
 	}
+	if entry, ok := hardLinkToProtected(pol, root, resolved); ok {
+		return false, "this is a hard link to a protected path (" + entry + ")", resolved
+	}
 	return true, "", resolved
+}
+
+// statID is the (device, inode) and link count of a file's metadata.
+func statID(fi os.FileInfo) (dev, ino, nlink uint64, ok bool) {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	return uint64(st.Dev), uint64(st.Ino), uint64(st.Nlink), true
+}
+
+// hardLinkToProtected reports the policy entry of the protected regular file the target is
+// another hard-link name of. Only an existing regular target with more than one link is
+// compared: first with the identities recorded at Start, then with the current identity of each
+// protected entry that is a regular file now. It never walks a directory.
+func hardLinkToProtected(pol policy, root, target string) (string, bool) {
+	fi, err := os.Lstat(target)
+	if err != nil || !fi.Mode().IsRegular() {
+		return "", false
+	}
+	dev, ino, nlink, ok := statID(fi)
+	if !ok || nlink <= 1 {
+		return "", false
+	}
+	for _, id := range pol.ProtectedIDs {
+		if id.Dev == dev && id.Ino == ino {
+			return filepath.ToSlash(id.Entry), true
+		}
+	}
+	for _, p := range pol.Protected {
+		pfi, err := os.Stat(filepath.Join(root, filepath.FromSlash(p)))
+		if err != nil || !pfi.Mode().IsRegular() {
+			continue
+		}
+		if d, i, _, ok := statID(pfi); ok && d == dev && i == ino {
+			return filepath.ToSlash(p), true
+		}
+	}
+	return "", false
+}
+
+// protectedIDs records the identity of every protected regular file that exists now: an entry
+// that is a regular file (a symlinked entry is followed) gives one record, and a directory
+// entry gives one record per regular file inside it (symlinks inside are not followed). Anything
+// missing, of another type or unreadable is skipped.
+func protectedIDs(root string, entries []string) []fileID {
+	var out []fileID
+	for _, e := range entries {
+		p := filepath.Join(root, filepath.FromSlash(e))
+		fi, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		switch {
+		case fi.Mode().IsRegular():
+			if d, i, _, ok := statID(fi); ok {
+				out = append(out, fileID{Entry: e, Dev: d, Ino: i})
+			}
+		case fi.IsDir():
+			_ = filepath.WalkDir(resolveReal(p), func(_ string, de fs.DirEntry, err error) error {
+				if err != nil || !de.Type().IsRegular() {
+					return nil
+				}
+				info, err := de.Info()
+				if err != nil {
+					return nil
+				}
+				if d, i, _, ok := statID(info); ok {
+					out = append(out, fileID{Entry: e, Dev: d, Ino: i})
+				}
+				return nil
+			})
+		}
+	}
+	return out
 }
 
 // resolveReal is p with every symlink resolved, also for a path that does not exist yet (the

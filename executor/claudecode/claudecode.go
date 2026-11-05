@@ -365,7 +365,7 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 	if err != nil {
 		return nil, executor.Fail(executor.ReasonFailed, "no randomness for the session id: "+err.Error())
 	}
-	pol := policy{Root: root, Protected: protected, Log: filepath.Join(dir, "hook-log.jsonl"), Nonce: nonce, ReadOnly: t.Role == executor.RoleShape}
+	pol := policy{Root: root, Protected: protected, Log: filepath.Join(dir, "hook-log.jsonl"), Nonce: nonce, ReadOnly: t.Role == executor.RoleShape, ProtectedIDs: protectedIDs(root, protected)}
 	if dirInCheckout {
 		pol.ArtifactDir = realDir
 	}

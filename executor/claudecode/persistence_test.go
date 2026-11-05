@@ -147,6 +147,12 @@ func TestRetainedRedactionBytes(t *testing.T) {
 
 // A failure discovered only while finalizing still replaces the successful result.
 func TestFinalPersistenceFailures(t *testing.T) {
+	// The failing artifact is a symlink to /dev/full, which only some platforms provide.
+	full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
+	if err != nil {
+		t.Skipf("/dev/full is not writable on this platform: %v", err)
+	}
+	full.Close()
 	for _, tc := range []struct {
 		name, artifact string
 		marker         bool
