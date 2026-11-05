@@ -31,12 +31,52 @@ const Version = "2.1.312"
 const SeamEnv = "KOGEN_CLAUDE_CODE_URL"
 
 const downloadIdleTimeout = 30 * time.Second
+
+// downloadHeaderTimeout bounds the wait for a response's complete headers; the idle bound
+// takes over once they have arrived.
+const downloadHeaderTimeout = 30 * time.Second
 const downloadAttempts = 3
 const downloadRetryDelay = 100 * time.Millisecond
 
 func (a *adapter) setDownloadRetryDelayForTest(d time.Duration) { a.downloadRetryDelay = d }
 
 func (a *adapter) setDownloadIdleTimeoutForTest(d time.Duration) { a.downloadIdle = d }
+
+func (a *adapter) setDownloadHeaderTimeoutForTest(d time.Duration) { a.downloadHeader = d }
+
+// doBounded sends req, whose context is cancelled by cancel, and gives up with
+// "the server did not answer" when the complete response headers do not arrive within the
+// header bound. A cancellation from the caller's ctx is never reported as that failure.
+func (a *adapter) doBounded(ctx context.Context, cancel context.CancelFunc, req *http.Request) (*http.Response, error) {
+	bound := a.downloadHeader
+	if bound == 0 {
+		bound = downloadHeaderTimeout
+	}
+	timer := time.AfterFunc(bound, cancel)
+	resp, err := http.DefaultClient.Do(req)
+	// A timer that already fired has cancelled, or is about to cancel, the request.
+	if !timer.Stop() && ctx.Err() == nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, errNoAnswer
+	}
+	return resp, err
+}
+
+var errNoAnswer = errors.New("the server did not answer")
+
+// cancelBody releases the request's context when its body is closed.
+type cancelBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b cancelBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
+}
 
 const downloadBase = "https://downloads.claude.ai/claude-code-releases"
 
@@ -293,7 +333,7 @@ func (a *adapter) downloadBinary(ctx context.Context, source, file string, want 
 	if err != nil {
 		return "", false, fail(err.Error())
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := a.doBounded(ctx, cancel, req)
 	if err != nil {
 		var ue *url.Error
 		if errors.As(err, &ue) {
@@ -410,17 +450,21 @@ func (b *idleReader) stop() bool {
 	return b.stalled
 }
 
-// get is one HTTP GET with no timeout of its own; anything but 200 is a refusal.
+// get is one HTTP GET whose response headers are bounded; anything but 200 is a refusal.
+// Closing the returned body releases the request.
 func (a *adapter) get(ctx context.Context, source string) (*http.Response, error) {
 	fail := func(detail string) error {
 		return unavailable("cannot download Claude Code " + Version + " from " + source + ": " + detail)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+	reqCtx, cancel := context.WithCancel(ctx)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, source, nil)
 	if err != nil {
+		cancel()
 		return nil, fail(err.Error())
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := a.doBounded(ctx, cancel, req)
 	if err != nil {
+		cancel()
 		if ctx.Err() != nil {
 			return nil, classify(ctx)
 		}
@@ -430,6 +474,7 @@ func (a *adapter) get(ctx context.Context, source string) (*http.Response, error
 		}
 		return nil, fail(err.Error())
 	}
+	resp.Body = cancelBody{resp.Body, cancel}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
 		return nil, fail("HTTP " + resp.Status)

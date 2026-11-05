@@ -702,3 +702,89 @@ func TestDownloadContextStopsWithoutRetry(t *testing.T) {
 		}
 	}
 }
+
+func TestDownloadHeaderTimeoutRetriesSilentBinary(t *testing.T) {
+	binary := script(Version, filepath.Join(t.TempDir(), "runs"))
+	s := newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
+		<-r.Context().Done()
+	})
+	home := t.TempDir()
+	var logs bytes.Buffer
+	a := installer(home, &logs)
+	a.setDownloadHeaderTimeoutForTest(100 * time.Millisecond)
+	a.setDownloadRetryDelayForTest(time.Millisecond)
+	start := time.Now()
+	err := a.ensureRuntime(context.Background())
+	source := s.URL + "/2.1.312/linux-x64/claude"
+	want := "cannot download Claude Code 2.1.312 from " + source + ": the server did not answer; 3 attempts"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("%v", err)
+	}
+	wantError(t, err, "executor/unavailable")
+	if s.downloads.Load() != 3 || strings.Count(logs.String(), "the server did not answer; retry after pause") != 2 || time.Since(start) > 5*time.Second {
+		t.Fatalf("downloads %d logs %s", s.downloads.Load(), logs.String())
+	}
+	for _, e := range entries(t, filepath.Join(home, ".kogen", "claude-code")) {
+		if strings.HasPrefix(e, ".partial-") {
+			t.Fatalf("partial left: %s", e)
+		}
+	}
+}
+
+func TestDownloadHeaderTimeoutDoesNotCutSlowBody(t *testing.T) {
+	binary := script(Version, filepath.Join(t.TempDir(), "runs"))
+	s := newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(b)))
+		w.Write(b[:1])
+		w.(http.Flusher).Flush()
+		time.Sleep(300 * time.Millisecond)
+		w.Write(b[1:])
+	})
+	a := installer(t.TempDir(), nil)
+	a.setDownloadHeaderTimeoutForTest(100 * time.Millisecond)
+	if err := a.ensureRuntime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s.downloads.Load() != 1 {
+		t.Fatalf("requests %d", s.downloads.Load())
+	}
+}
+
+func TestDownloadHeaderTimeoutSilentManifestIsSingleAttempt(t *testing.T) {
+	var manifests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "manifest.json") {
+			manifests.Add(1)
+		}
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	t.Setenv(SeamEnv, srv.URL)
+	a := installer(t.TempDir(), nil)
+	a.setDownloadHeaderTimeoutForTest(100 * time.Millisecond)
+	err := a.ensureRuntime(context.Background())
+	want := "cannot download Claude Code 2.1.312 from " + srv.URL + "/2.1.312/manifest.json: the server did not answer"
+	if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "attempts") {
+		t.Fatalf("%v", err)
+	}
+	wantError(t, err, "executor/unavailable")
+	if manifests.Load() != 1 {
+		t.Fatalf("manifest requests %d", manifests.Load())
+	}
+}
+
+func TestDownloadHeaderTimeoutYieldsToCallerDeadline(t *testing.T) {
+	binary := script(Version, filepath.Join(t.TempDir(), "runs"))
+	newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
+		<-r.Context().Done()
+	})
+	a := installer(t.TempDir(), nil)
+	a.setDownloadHeaderTimeoutForTest(5 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := a.ensureRuntime(ctx)
+	wantError(t, err, "executor/deadline")
+	if strings.Contains(err.Error(), "did not answer") {
+		t.Fatalf("%v", err)
+	}
+}

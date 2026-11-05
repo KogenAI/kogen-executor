@@ -84,6 +84,7 @@ type adapter struct {
 	opts               Options
 	goos, goarch       string
 	downloadIdle       time.Duration
+	downloadHeader     time.Duration
 	downloadRetryDelay time.Duration
 }
 
