@@ -573,12 +573,13 @@ func classifyProtected(root string, paths []string) (out []string, dropped []pro
 			out = append(out, filepath.ToSlash(p))
 			continue
 		}
-		entry := original
+		entry := strings.ToValidUTF8(original, "\uFFFD")
 		if len(entry) > 256 {
-			entry = entry[:256]
-			for !utf8.ValidString(entry) {
-				entry = entry[:len(entry)-1]
+			cut := 256
+			for cut > 0 && !utf8.RuneStart(entry[cut]) {
+				cut--
 			}
+			entry = entry[:cut]
 		}
 		drop := protectedDrop{Entry: entry, Reason: reason}
 		if reason == "root_or_parent" {

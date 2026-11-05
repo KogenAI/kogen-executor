@@ -1,11 +1,13 @@
 package claudecode
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestProtectedClassification(t *testing.T) {
@@ -33,6 +35,31 @@ func TestProtectedDropBounds(t *testing.T) {
 		}
 		if drops[0].Entry != "/outside/"+strings.Repeat("a", 246) {
 			t.Fatalf("bad UTF-8 boundary: %q", drops[0].Entry)
+		}
+	}
+}
+
+func TestProtectedDropInvalidUTF8(t *testing.T) {
+	for _, c := range []struct{ name, in, want string }{
+		{"invalid byte early in a long entry", "/elsewhere/\xff" + strings.Repeat("a", 300), "/elsewhere/\uFFFD" + strings.Repeat("a", 242)},
+		{"leading invalid byte", "\xff/../../x" + strings.Repeat("a", 300), "\uFFFD/../../x" + strings.Repeat("a", 245)},
+		{"short entry with many invalid bytes", "/elsewhere/" + strings.Repeat("\xffa", 120), "/elsewhere/" + strings.Repeat("\uFFFDa", 61)},
+	} {
+		_, drops, _, fatal := classifyProtected("/r", []string{c.in})
+		if fatal != nil || len(drops) != 1 || drops[0].Reason != "outside_checkout" {
+			t.Fatalf("%s: drops=%v fatal=%v", c.name, drops, fatal)
+		}
+		got := drops[0].Entry
+		if got != c.want || !utf8.ValidString(got) || len(got) > 256 {
+			t.Fatalf("%s: got %d bytes %q, want %q", c.name, len(got), got, c.want)
+		}
+		raw, err := json.Marshal(drops[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back protectedDrop
+		if err := json.Unmarshal(raw, &back); err != nil || back.Entry != c.want || len(back.Entry) > 256 {
+			t.Fatalf("%s: marshalled round trip %d bytes, err=%v", c.name, len(back.Entry), err)
 		}
 	}
 }
