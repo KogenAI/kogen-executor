@@ -26,19 +26,16 @@ type stderrPersistence struct {
 	cap, kept, lost int64
 }
 
+// Write always accepts all of b. Whatever does not reach w, whether over the cap or
+// refused by a failed or short write, is counted in lost; the failure itself is
+// recorded by the retainedWriter around the file.
 func (p *stderrPersistence) Write(b []byte) (int, error) {
-	n := int(min(int64(len(b)), p.cap-p.kept))
-	if n > 0 {
-		written, err := p.w.Write(b[:n])
+	var written int
+	if n := int(min(int64(len(b)), p.cap-p.kept)); n > 0 {
+		written, _ = p.w.Write(b[:n])
 		p.kept += int64(written)
-		if err != nil {
-			return written, err
-		}
-		if written != n {
-			return written, io.ErrShortWrite
-		}
 	}
-	p.lost += int64(len(b) - n)
+	p.lost += int64(len(b) - written)
 	return len(b), nil
 }
 

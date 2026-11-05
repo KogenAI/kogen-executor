@@ -43,7 +43,8 @@ type Options struct {
 	// StderrPersistBytes caps redacted stderr per round; <=0 defaults to 8 MiB.
 	// Overflow adds a [kogen: stderr persistence stopped at cap_bytes=...;
 	// unpersisted_bytes=...] marker. Terminal events report stderr_persist_truncated
-	// and stderr_persist_unpersisted_bytes only on overflow.
+	// and stderr_persist_unpersisted_bytes only on overflow or when a failed or short
+	// write left stderr bytes unpersisted; stderr keeps draining after such a failure.
 	StderrPersistBytes int64
 	// MaxTurns is Claude Code's per-round turn limit (default 150).
 	MaxTurns int

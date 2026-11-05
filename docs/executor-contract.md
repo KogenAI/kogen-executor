@@ -48,7 +48,10 @@ The stderr marker includes the leading separator newline. On either terminal
 `executor_round_ended` or `executor_round_failed` event, overflow adds
 `stream_persist_truncated: true` and `stream_persist_unpersisted_bytes`, or
 `stderr_persist_truncated: true` and `stderr_persist_unpersisted_bytes`, for
-the affected file only. Under the cap these fields and markers are absent.
+the affected file only. The stderr fields also count stderr bytes that a failed or
+short write to `round-N.stderr` did not persist, and stderr keeps draining after
+such a failure. Under the cap and without a failed write these fields and markers
+are absent.
 
 A failed or short write to either artifact, including a truncation marker or the
 final stderr redactor flush, fails the round with `executor/failed` rather than

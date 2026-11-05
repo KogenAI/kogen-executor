@@ -123,9 +123,25 @@ func TestRetainedWritesAndRedactorFlush(t *testing.T) {
 	if _, err := redactor.Write([]byte("abcd")); err != nil {
 		t.Fatal(err)
 	}
-	if err := redactor.Flush(); err == nil || file.kept != 2 || string(sink.data) != "ab" {
-		t.Fatalf("flush: %q %d %v", sink.data, file.kept, err)
+	if err := redactor.Flush(); err != nil || file.err == nil || file.kept != 2 || string(sink.data) != "ab" || capped.lost != 2 {
+		t.Fatalf("flush: %q %d %v %v %d", sink.data, file.kept, err, file.err, capped.lost)
 	}
+}
+
+func TestStderrPersistenceCountsUnwrittenBytes(t *testing.T) {
+	write := func(t *testing.T, p *stderrPersistence, in string, kept, lost int64) {
+		t.Helper()
+		n, err := p.Write([]byte(in))
+		if n != len(in) || err != nil || p.kept != kept || p.lost != lost {
+			t.Fatalf("write %q: n=%d err=%v kept=%d lost=%d", in, n, err, p.kept, p.lost)
+		}
+	}
+	for _, short := range []bool{false, true} {
+		p := &stderrPersistence{w: &partialSink{limit: 3, short: short}, cap: 100}
+		write(t, p, "abcdef", 3, 3)
+		write(t, p, "gh", 3, 5)
+	}
+	write(t, &stderrPersistence{w: &partialSink{limit: 2}, cap: 4}, "abcdef", 2, 4)
 }
 
 func TestRetainedRedactionBytes(t *testing.T) {
@@ -207,6 +223,41 @@ func TestFinalPersistenceFailures(t *testing.T) {
 				t.Fatalf("events %v", h.events)
 			}
 		})
+	}
+}
+
+// A stderr artifact that refuses every write still drains the child and counts every byte.
+func TestStderrWriteFailureCountsEveryByte(t *testing.T) {
+	full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
+	if err != nil {
+		t.Skipf("/dev/full is not writable on this platform: %v", err)
+	}
+	full.Close()
+	h := newHarness(t, fakeConfig{Script: oneRound(finishRound)})
+	s, err := h.start(h.f.options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ss := s.(*session)
+	wrapper := filepath.Join(t.TempDir(), "wrapper")
+	script := "#!/bin/sh\nhead -c 1048576 /dev/zero >&2\nexec '" + ss.bin + "' \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ss.bin = wrapper
+	if err := os.Symlink("/dev/full", filepath.Join(h.task.Dir, "round-1.stderr")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Round(context.Background(), executor.Input{})
+	e := wantError(t, err, "executor/failed")
+	if e.Detail != "cannot persist round-1.stderr after 0 bytes" {
+		t.Fatal(e.Detail)
+	}
+	ev := h.eventsNamed("executor_round_failed")
+	if len(ev) != 1 || ev[0]["artifact"] != "round-1.stderr" || ev[0]["kept_bytes"] != int64(0) ||
+		ev[0]["stderr_persist_truncated"] != true || ev[0]["stderr_persist_unpersisted_bytes"] != int64(1048576) {
+		t.Fatalf("events %v", h.events)
 	}
 }
 
