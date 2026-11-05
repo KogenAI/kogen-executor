@@ -16,38 +16,118 @@ const (
 	argMinEnvBytes = 8
 )
 
-// secretWords are the separated words or word sequences that make a NAME secret-named.
-var secretWords = []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "PASSPHRASE", "API_KEY", "APIKEY", "ACCESS_KEY", "PRIVATE_KEY", "CREDENTIAL"}
+// secretWords are the words that make a NAME secret-named. TOKENS is separate: it only counts
+// when its value is not a count.
+var secretWords = map[string]bool{
+	"TOKEN": true, "SECRET": true, "PASSWORD": true, "PASSWD": true, "PASSPHRASE": true, "APIKEY": true, "CREDENTIAL": true,
+	"SECRETS": true, "PASSWORDS": true, "PASSWDS": true, "PASSPHRASES": true, "APIKEYS": true, "CREDENTIALS": true,
+	"COOKIE": true, "BEARER": true, "AUTHORIZATION": true,
+	"AUTHTOKEN": true, "ACCESSTOKEN": true, "REFRESHTOKEN": true, "CLIENTSECRET": true, "PRIVATEKEY": true,
+}
 
-// secretNamed reports whether an environment, assignment or option NAME looks like it holds a secret.
-func secretNamed(name string) bool {
-	n := strings.ToUpper(strings.ReplaceAll(strings.TrimLeft(name, "-"), "-", "_"))
-	parts := strings.Split(n, "_")
-	if parts[0] == "NO" {
-		return false
-	}
-	switch parts[len(parts)-1] {
-	case "FILE", "PATH", "STDIN", "LIMIT", "COUNT", "LENGTH", "SIZE", "NAME", "HELPER", "TTL", "MAX", "MIN":
-		return false
-	}
-	for _, w := range secretWords {
-		if strings.Contains("_"+n+"_", "_"+w+"_") {
-			return true
+// secretPairs are the adjacent word pairs that make a NAME secret-named.
+var secretPairs = map[string]bool{
+	"API KEY": true, "ACCESS KEY": true, "PRIVATE KEY": true, "ENCRYPTION KEY": true,
+	"SIGNING KEY": true, "MASTER KEY": true, "SESSION KEY": true, "DECRYPTION KEY": true,
+}
+
+// nonsecretLast are the last words that exempt a NAME.
+var nonsecretLast = map[string]bool{
+	"FILE": true, "PATH": true, "STDIN": true, "LIMIT": true, "COUNT": true, "LENGTH": true,
+	"SIZE": true, "NAME": true, "HELPER": true, "TTL": true, "MAX": true, "MIN": true,
+}
+
+func isNameSeparator(r rune) bool { return r == '_' || r == '-' || r == '.' }
+
+func isUpperByte(c byte) bool { return c >= 'A' && c <= 'Z' }
+func isLowerByte(c byte) bool { return c >= 'a' && c <= 'z' }
+func isDigitByte(c byte) bool { return c >= '0' && c <= '9' }
+
+// splitCamel splits w before an uppercase letter that follows a lowercase letter or a digit, and
+// before an uppercase letter that is followed by a lowercase letter and preceded by an uppercase one.
+func splitCamel(w string) []string {
+	var out []string
+	start := 0
+	for i := 1; i < len(w); i++ {
+		if !isUpperByte(w[i]) {
+			continue
+		}
+		prev := w[i-1]
+		if isLowerByte(prev) || isDigitByte(prev) || (isUpperByte(prev) && i+1 < len(w) && isLowerByte(w[i+1])) {
+			out = append(out, w[start:i])
+			start = i
 		}
 	}
-	return false
+	return append(out, w[start:])
+}
+
+// nameWords returns the words of a NAME: list A splits on separators, list B also at camelCase
+// boundaries. Words are upper-case.
+func nameWords(name string) (a, b []string) {
+	for _, piece := range strings.FieldsFunc(strings.TrimLeft(name, "-"), isNameSeparator) {
+		a = append(a, strings.ToUpper(piece))
+		for _, w := range splitCamel(piece) {
+			b = append(b, strings.ToUpper(w))
+		}
+	}
+	return a, b
+}
+
+// isCount reports whether value is one or more ASCII digits once one pair of surrounding quotes is removed.
+func isCount(value string) bool {
+	if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
+		value = value[1 : len(value)-1]
+	}
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if !isDigitByte(value[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// secretNamed reports whether an environment, assignment or option NAME with the given VALUE looks
+// like it holds a secret.
+func secretNamed(name, value string) bool {
+	a, b := nameWords(name)
+	for _, words := range [][]string{a, b} {
+		if len(words) == 0 {
+			continue
+		}
+		if words[0] == "NO" || nonsecretLast[words[len(words)-1]] {
+			return false
+		}
+	}
+	tokens := false
+	for _, words := range [][]string{a, b} {
+		for i, w := range words {
+			if secretWords[w] || (i+1 < len(words) && secretPairs[w+" "+words[i+1]]) {
+				return true
+			}
+			if w == "TOKENS" {
+				tokens = true
+			}
+		}
+	}
+	return tokens && !isCount(value)
 }
 
 const argValue = `\$'(?:\\.|[^'\\])*'|\\"(?:\\.|[^"\\])*\\"|\\'(?:\\.|[^'\\])*\\'|'[^']*'|"[^"]*"|[^\s'"` + "`" + `;&|()<>]+`
 
 var (
-	reHeader      = regexp.MustCompile(`(?i)(?:^|\s)(?:-H|--header)\s+(?:"[A-Za-z0-9_-]+:[^"\r\n]*"|'[A-Za-z0-9_-]+:[^'\r\n]*')`)
-	rePair        = regexp.MustCompile(`(?i)(["']?[A-Za-z0-9_-]+["']?)(\s*:\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[redacted\][^\s,;}\]"']*|[^\s,;}\]"']+)`)
-	reBasicAuth   = regexp.MustCompile(`(^|\s)(?:-u|--user)\s+(?:"[^"\s:]+:(?:\\.|[^"\\])*"|'[^'\s:]+:[^']*'|[^\s:'"]+:[^\s'";&|()<>]+)`)
-	rePrivateKey  = regexp.MustCompile(`(?s)-----BEGIN[A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END[A-Z0-9 ]*PRIVATE KEY-----|\z)`)
-	reURLAuth     = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.\-]*://[^\s:/@]*:)[^\s/@]+(@)`)
-	reAuthHeader  = regexp.MustCompile(`(?i)(Authorization:\s*[A-Za-z]+\s+)[^\s'"]+`)
-	reTokens      = regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]+|\bgithub_pat_[A-Za-z0-9_]+|\bsk-[A-Za-z0-9_-]{20,}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bxox[abprs]-[A-Za-z0-9-]+`)
+	reHeader     = regexp.MustCompile(`(?i)(?:^|\s)(?:-H|--header)\s+(?:"[A-Za-z0-9_-]+:[^"\r\n]*"|'[A-Za-z0-9_-]+:[^'\r\n]*')`)
+	rePair       = regexp.MustCompile(`(?i)(["']?[A-Za-z0-9_-]+["']?)(\s*:\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[redacted\][^\s,;}\]"']*|[^\s,;}\]"']+)`)
+	reBasicAuth  = regexp.MustCompile(`(^|\s)(?:-u|--user)\s+(?:"[^"\s:]+:(?:\\.|[^"\\])*"|'[^'\s:]+:[^']*'|[^\s:'"]+:[^\s'";&|()<>]+)`)
+	rePrivateKey = regexp.MustCompile(`(?s)-----BEGIN[A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END[A-Z0-9 ]*PRIVATE KEY-----|\z)`)
+	reURLAuth    = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.\-]*://[^\s:/@]*:)[^\s/@]+(@)`)
+	reAuthHeader = regexp.MustCompile(`(?i)(Authorization:\s*[A-Za-z]+\s+)[^\s'"]+`)
+	reTokens     = regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]+|\bgithub_pat_[A-Za-z0-9_]+|\bsk-[A-Za-z0-9_-]{20,}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bxox[abprs]-[A-Za-z0-9-]+` +
+		`|\b(?:sk_live_|rk_live_|sk_test_)[A-Za-z0-9]{24,}|\bglpat-[A-Za-z0-9_-]{20,}|\bnpm_[A-Za-z0-9]{36,}|\bAIza[A-Za-z0-9_-]{35,}|\bxapp-[A-Za-z0-9-]+` +
+		`|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
+	reCookie      = regexp.MustCompile(`(?i)(^|[\s"'])((?:Set-)?Cookie:[ \t]*)`)
 	reAssignValue = regexp.MustCompile(`^(?:` + argValue + `)`)
 	reOption      = regexp.MustCompile(`(^|\s)(--?[A-Za-z0-9_][A-Za-z0-9_-]*)(\s+)(?:` + argValue + `)`)
 )
@@ -59,7 +139,7 @@ func secretEnvValues(env []string) []string {
 	var out []string
 	for _, kv := range env {
 		name, val, ok := strings.Cut(kv, "=")
-		if !ok || len(val) < argMinEnvBytes || !secretNamed(name) || seen[val] {
+		if !ok || len(val) < argMinEnvBytes || !secretNamed(name, val) || seen[val] {
 			continue
 		}
 		seen[val] = true
@@ -80,16 +160,18 @@ func redactSecrets(s string, envValues []string) string {
 		match := s[m[0]:m[1]]
 		colon := strings.IndexByte(match, ':')
 		quote := strings.IndexAny(match, "\"'")
-		name := strings.ToUpper(match[quote+1 : colon])
-		if name != "COOKIE" && name != "SET-COOKIE" && !strings.Contains(name, "KEY") && !strings.Contains(name, "TOKEN") && !strings.Contains(name, "SECRET") && !strings.Contains(name, "AUTH") {
-			return match
-		}
+		rawName := match[quote+1 : colon]
+		name := strings.ToUpper(rawName)
 		start := colon + 1
 		for start < len(match)-1 && (match[start] == ' ' || match[start] == '\t') {
 			start++
 		}
+		if name != "COOKIE" && name != "SET-COOKIE" && !strings.Contains(name, "KEY") && !strings.Contains(name, "TOKEN") && !strings.Contains(name, "SECRET") && !strings.Contains(name, "AUTH") && !secretNamed(rawName, match[start:len(match)-1]) {
+			return match
+		}
 		return match[:start] + redactMark + match[len(match)-1:]
 	})
+	s = redactCookies(s)
 	s = reAuthHeader.ReplaceAllString(s, "${1}"+redactMark)
 	s = replaceMatches(reBasicAuth, s, func(s string, m []int) string {
 		match := s[m[0]:m[1]]
@@ -102,11 +184,12 @@ func redactSecrets(s string, envValues []string) string {
 	})
 	s = replaceMatches(rePair, s, func(s string, m []int) string {
 		name := strings.Trim(s[m[2]:m[3]], "\"'")
-		if !secretNamed(name) {
+		value := s[m[6]:m[7]]
+		if !secretNamed(name, value) || value == redactMark {
 			return s[m[0]:m[1]]
 		}
-		value := s[m[6]:m[7]]
-		if value == redactMark {
+		// "Authorization: <scheme> [redacted]" was already handled by the Authorization rule.
+		if strings.EqualFold(name, "authorization") && isLetters(value) && authSchemeRedacted.MatchString(s[m[7]:]) {
 			return s[m[0]:m[1]]
 		}
 		if len(value) >= 2 && (value[0] == '\'' || value[0] == '"') {
@@ -125,7 +208,7 @@ func redactSecrets(s string, envValues []string) string {
 			break
 		}
 		part := s[offset:]
-		if secretNamed(part[m[4]:m[5]]) && !strings.HasPrefix(part[m[7]:m[1]], "-") {
+		if secretNamed(part[m[4]:m[5]], part[m[7]:m[1]]) && !strings.HasPrefix(part[m[7]:m[1]], "-") {
 			b.WriteString(part[:m[7]])
 			b.WriteString(redactMark)
 			offset += m[1]
@@ -154,17 +237,59 @@ func redactAssignments(s string) string {
 		for j > last && isNameByte(s[j-1]) {
 			j--
 		}
-		if j == i || !secretNamed(s[j:i]) {
+		if j == i {
 			continue
 		}
 		m := reAssignValue.FindStringIndex(s[i+1:])
-		if m == nil {
+		if m == nil || !secretNamed(s[j:i], s[i+1:i+1+m[1]]) {
 			continue
 		}
 		b.WriteString(s[last : i+1])
 		b.WriteString(redactMark)
 		last = i + 1 + m[1]
 		i = last - 1
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+var authSchemeRedacted = regexp.MustCompile(`^\s+\[redacted\]`)
+
+func isLetters(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if !isUpperByte(s[i]) && !isLowerByte(s[i]) {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// redactCookies replaces the value of every Cookie: or Set-Cookie: in s. The value runs to the
+// next quote when the name directly follows that quote, and otherwise to the end of the line.
+func redactCookies(s string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range reCookie.FindAllStringSubmatchIndex(s, -1) {
+		if m[4] < last {
+			continue
+		}
+		var end int
+		if lead := s[m[2]:m[3]]; lead == "\"" || lead == "'" {
+			end = strings.Index(s[m[1]:], lead)
+		} else {
+			end = strings.IndexAny(s[m[1]:], "\r\n")
+		}
+		if end < 0 {
+			end = len(s)
+		} else {
+			end += m[1]
+		}
+		if end == m[1] {
+			continue
+		}
+		b.WriteString(s[last:m[1]])
+		b.WriteString(redactMark)
+		last = end
 	}
 	b.WriteString(s[last:])
 	return b.String()
@@ -205,6 +330,18 @@ func boundString(s string) any {
 	return map[string]any{"truncated": true, "bytes": len(s), "sha256": sha256Hex([]byte(s)), "head": s[:cut]}
 }
 
+// jsonValueText is the text a JSON value stands for when deciding whether its key is a count: a
+// number is a count, a string is itself and anything else is not.
+func jsonValueText(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case float64, json.Number, int, int64:
+		return "0"
+	}
+	return ""
+}
+
 // processValue redacts and then bounds every string value of v at any depth.
 func processValue(v any, envValues []string) any {
 	switch x := v.(type) {
@@ -213,7 +350,7 @@ func processValue(v any, envValues []string) any {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, e := range x {
-			if secretNamed(k) {
+			if secretNamed(k, jsonValueText(e)) {
 				out[k] = redactMark
 			} else {
 				out[k] = processValue(e, envValues)

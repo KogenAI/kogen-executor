@@ -134,6 +134,10 @@ func TestToolArgumentsNonsecretNames(t *testing.T) {
 		{"tool --PaSsWoRd-FiLe /tmp/pw", "tool --PaSsWoRd-FiLe /tmp/pw"},
 		{"API_TOKEN=4096 tool --client-secret value", "API_TOKEN=[redacted] tool --client-secret [redacted]"},
 		{"PASSWORD_FILE=env-held-FAKE-value-5678 --no-password env-held-FAKE-value-5678", "PASSWORD_FILE=[redacted] --no-password [redacted]"},
+		{"accessTokenFile=/run/t cookieCount=3 noPassword=x mytoken=5 keyboardLayout=us", "accessTokenFile=/run/t cookieCount=3 noPassword=x mytoken=5 keyboardLayout=us"},
+		{"tool --noPassword host --accessTokenFile /run/t", "tool --noPassword host --accessTokenFile /run/t"},
+		{"tool --tokens 4096 run API_TOKENS=s3cr3tVALUE9x", "tool --tokens 4096 run API_TOKENS=[redacted]"},
+		{"tool --PaSsWoRd value run", "tool --PaSsWoRd [redacted] run"},
 	}
 	env := secretEnvValues([]string{"DB_PASSWORD=env-held-FAKE-value-5678"})
 	for _, c := range cases {
@@ -206,5 +210,67 @@ func TestToolArgumentsSecretJSONKeys(t *testing.T) {
 	want := map[string]any{"api_key": "[redacted]", "nested": []any{map[string]any{"password": "[redacted]", "ok": true, "count": json.Number("1.5")}}}
 	if got := toolArguments(input, nil); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestSecretNamedWords(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, value string
+		want        bool
+	}{
+		{"API_TOKEN", "x", true}, {"--password", "x", true}, {"DB_PASSWORD", "x", true}, {"client-secret", "x", true},
+		{"GITHUB_TOKEN", "x", true}, {"--api-key", "x", true}, {"X-Api-Key", "x", true}, {"db.password", "x", true},
+		{"accessToken", "x", true}, {"_authToken", "x", true}, {"signingKey", "x", true}, {"--PaSsWoRd", "x", true},
+		{"AWS_CREDENTIALS", "x", true}, {"DOCKER_SECRETS", "x", true}, {"--cookie", "x", true}, {"bearer", "x", true},
+		{"AUTHORIZATION", "x", true}, {"ENCRYPTION_KEY", "x", true}, {"authtoken", "x", true}, {"privatekey", "x", true},
+		{"tokenizer", "x", false}, {"keyboardLayout", "x", false}, {"mytoken", "5", false}, {"keys", "x", false},
+		{"TOKEN_COUNT", "x", false}, {"--token-limit", "x", false}, {"PASSWORD_FILE", "x", false}, {"--password-stdin", "x", false},
+		{"--no-password", "x", false}, {"CREDENTIAL_HELPER", "x", false}, {"SECRET_NAME", "x", false}, {"cookieCount", "x", false},
+		{"accessTokenFile", "x", false}, {"noPassword", "x", false}, {"--PaSsWoRd-FiLe", "x", false}, {"NO_PASSWORD", "x", false},
+		{"TOKENS", "4096", false}, {"TOKENS", `"4096"`, false}, {"--max-tokens", "4096", false}, {"API_TOKENS", "s3cr3tVALUE9x", true},
+		{"TOKENS", "40.5", true}, {"TOKENS", "", true}, {"API_TOKEN", "4096", true},
+	}
+	for _, c := range cases {
+		if got := secretNamed(c.name, c.value); got != c.want {
+			t.Errorf("secretNamed(%q, %q) = %v want %v", c.name, c.value, got, c.want)
+		}
+	}
+}
+
+func TestToolArgumentsNewRules(t *testing.T) {
+	t.Parallel()
+	fake := func(prefix string, n int) string { return prefix + strings.Repeat("A", n) }
+	cases := []struct{ in, want string }{
+		{`curl -H "X-Password: open s3cr3tVALUE9x" h`, `curl -H "X-Password: [redacted]" h`},
+		{`echo "Cookie: theme=dark; session=s3cr3tVALUE9x" > req.txt`, `echo "Cookie: [redacted]" > req.txt`},
+		{"a\nSet-Cookie: x=1; Path=/\nb", "a\nSet-Cookie: [redacted]\nb"},
+		{`echo 'cookie:	a=b' c`, `echo 'cookie:	[redacted]' c`},
+		{"Authorization: Bearer abc.def", "Authorization: Bearer [redacted]"},
+		{`{"authorization": "Bearer abc"}`, `{"authorization": "[redacted]"}`},
+		{"signingKey: s3cr3tVALUE9x\nregion: eu", "signingKey: [redacted]\nregion: eu"},
+		{"tool --tokens 4096 run --max-tokens=4096", "tool --tokens 4096 run --max-tokens=4096"},
+		{"API_TOKENS=s3cr3tVALUE9x ./run", "API_TOKENS=[redacted] ./run"},
+		{"echo " + fake("sk_live_", 24) + " " + fake("sk_live_", 23), "echo [redacted] " + fake("sk_live_", 23)},
+		{fake("rk_live_", 24) + " " + fake("sk_test_", 24), "[redacted] [redacted]"},
+		{fake("glpat-", 20) + " " + fake("glpat-", 19), "[redacted] " + fake("glpat-", 19)},
+		{fake("npm_", 36) + " " + fake("npm_", 35) + " npm_config_cache", "[redacted] " + fake("npm_", 35) + " npm_config_cache"},
+		{fake("AIza", 35) + " " + fake("AIza", 34), "[redacted] " + fake("AIza", 34)},
+		{"xapp-1-A0-123-abc xapp-", "[redacted] xapp-"},
+		{"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.ZmFrZXNpZ25hdHVyZQ eyJ sk_learn", "[redacted] eyJ sk_learn"},
+	}
+	for _, c := range cases {
+		if got := redactSecrets(c.in, nil); got != c.want {
+			t.Errorf("%q: got %q want %q", c.in, got, c.want)
+		}
+	}
+	env := secretEnvValues([]string{"AWS_CREDENTIALS=s3cr3tVALUE9x", "MAX_TOKENS=12345678", "TOKENS=87654321"})
+	if got := redactSecrets("s3cr3tVALUE9x 12345678 87654321", env); got != "[redacted] 12345678 87654321" {
+		t.Errorf("env values: %q", got)
+	}
+	args := toolArguments(map[string]any{"accessToken": "x", "max_tokens": float64(4096), "tokens": "4096", "keyboardLayout": "us"}, nil)
+	want := map[string]any{"accessToken": "[redacted]", "max_tokens": float64(4096), "tokens": "4096", "keyboardLayout": "us"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("arguments %v want %v", args, want)
 	}
 }
