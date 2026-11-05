@@ -3,11 +3,11 @@ package claudecode
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -165,12 +165,6 @@ func TestRetainedRedactionBytes(t *testing.T) {
 
 // A failure discovered only while finalizing still replaces the successful result.
 func TestFinalPersistenceFailures(t *testing.T) {
-	// The failing artifact is a symlink to /dev/full, which only some platforms provide.
-	full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
-	if err != nil {
-		t.Skipf("/dev/full is not writable on this platform: %v", err)
-	}
-	full.Close()
 	for _, tc := range []struct {
 		name, artifact string
 		marker         bool
@@ -192,28 +186,34 @@ func TestFinalPersistenceFailures(t *testing.T) {
 			defer s.Close()
 			ss := s.(*session)
 			wrapper := filepath.Join(t.TempDir(), "wrapper")
-			script := "#!/bin/sh\nprintf x >&2\nexec '" + ss.bin + "' \"$@\"\n"
+			gate := filepath.Join(t.TempDir(), "gate")
+			if err := syscall.Mkfifo(gate, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			script := "#!/bin/sh\nread _ <'" + gate + "'\nprintf x >&2\nexec '" + ss.bin + "' \"$@\"\n"
 			if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
 			ss.bin = wrapper
-			// /dev/full makes the persistence write fail. Where it cannot be opened, a pipe
-			// whose read end is already closed fails that write the same way.
-			sink := "/dev/full"
-			if f, err := os.OpenFile(sink, os.O_WRONLY, 0); err != nil {
-				r, w, perr := os.Pipe()
-				if perr != nil {
-					t.Fatal(perr)
-				}
-				r.Close()
-				t.Cleanup(func() { w.Close() })
-				sink = fmt.Sprintf("/dev/fd/%d", w.Fd())
-			} else {
-				f.Close()
-			}
-			if err := os.Symlink(sink, filepath.Join(h.task.Dir, tc.artifact)); err != nil {
+			// The artifact is a FIFO. The session's open waits for a reader; once a reader has
+			// opened and closed it, every write fails with EPIPE. Only then is the wrapper
+			// released through the gate, so no child output can reach an open reader.
+			artifact := filepath.Join(h.task.Dir, tc.artifact)
+			if err := syscall.Mkfifo(artifact, 0o600); err != nil {
 				t.Fatal(err)
 			}
+			go func() {
+				r, err := os.OpenFile(artifact, os.O_RDONLY, 0)
+				if err != nil {
+					return
+				}
+				r.Close()
+				g, err := os.OpenFile(gate, os.O_WRONLY, 0)
+				if err != nil {
+					return
+				}
+				g.Close()
+			}()
 			_, err = s.Round(context.Background(), executor.Input{})
 			e := wantError(t, err, "executor/failed")
 			if e.Detail != "cannot persist "+tc.artifact+" after 0 bytes" {
