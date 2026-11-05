@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1410,45 +1412,105 @@ func TestRedactNoTokenIsIdentity(t *testing.T) {
 
 func TestChildEnvRouteSelectors(t *testing.T) {
 	keys := []string{
-		"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
+		"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
+		"CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
 		"ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_EXTRA_BODY", "ANTHROPIC_UNIX_SOCKET",
 		"ANTHROPIC_BEDROCK_BASE_URL", "ANTHROPIC_VERTEX_BASE_URL", "ANTHROPIC_VERTEX_PROJECT_ID",
 		"ANTHROPIC_FOUNDRY_BASE_URL", "ANTHROPIC_FOUNDRY_RESOURCE",
 		"CLAUDE_CODE_SKIP_BEDROCK_AUTH", "CLAUDE_CODE_SKIP_VERTEX_AUTH", "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+		"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+		"GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+		"GIT_CONFIG_KEY_12", "GIT_CONFIG_VALUE_12", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_GLOBAL",
+		"GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
+		"MAX_THINKING_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "MAX_MCP_OUTPUT_TOKENS",
+		"BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS", "BASH_MAX_OUTPUT_LENGTH", "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR",
+		"DISABLE_PROMPT_CACHING", "DISABLE_PROMPT_CACHING_HAIKU", "DISABLE_PROMPT_CACHING_SONNET",
+		"DISABLE_PROMPT_CACHING_OPUS", "DISABLE_PROMPT_CACHING_FABLE",
 	}
-	base := []string{"HTTPS_PROXY=proxy", "NO_PROXY=local", "AWS_REGION=region", "PATH=/bin", "CLAUDE_CONFIG_DIR=old", "CLAUDE_CONFIG_DIR=older", "HOME=old", "HOME=older", "DISABLE_UPDATES=0", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=0", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=0"}
+	kept := []string{
+		"HTTPS_PROXY=proxy", "NO_PROXY=local", "AWS_REGION=region", "PATH=/bin", "SSL_CERT_FILE=/etc/ssl/cert.pem",
+		"LANG=C.UTF-8", "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes", "GIT_OPTIONAL_LOCKS=1",
+	}
+	base := append([]string{"CLAUDE_CONFIG_DIR=old", "CLAUDE_CONFIG_DIR=older", "HOME=old", "HOME=older", "DISABLE_UPDATES=0", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=0", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=0"}, kept...)
 	for _, key := range keys {
 		base = append(base, key+"=inherited")
 	}
 	got := childEnv(base, "/h", "", "/cfg")
-	want := []string{"HTTPS_PROXY=proxy", "NO_PROXY=local", "AWS_REGION=region", "PATH=/bin", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "DISABLE_UPDATES=1", "CLAUDE_CONFIG_DIR=/cfg", "HOME=/h"}
+	want := append(slices.Clone(kept), "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "DISABLE_UPDATES=1", "CLAUDE_CONFIG_DIR=/cfg", "HOME=/h")
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("child environment = %v, want %v", got, want)
+	}
+	wantShape := append(slices.DeleteFunc(slices.Clone(want), func(kv string) bool { return kv == "GIT_OPTIONAL_LOCKS=1" }), "GIT_OPTIONAL_LOCKS=0")
+	if got := shapeEnv(got); !reflect.DeepEqual(got, wantShape) {
+		t.Fatalf("shape environment = %v, want %v", got, wantShape)
 	}
 }
 
 func TestRoundDoesNotInheritModelOrHeaders(t *testing.T) {
-	h := newHarness(t, fakeConfig{Script: oneRound(finishRound)})
-	h.task.Model = ""
-	s, err := h.start(h.f.options("ANTHROPIC_MODEL=x", "ANTHROPIC_CUSTOM_HEADERS=h"))
-	if err != nil {
-		t.Fatal(err)
+	parent := []string{"ANTHROPIC_MODEL=x", "ANTHROPIC_CUSTOM_HEADERS=h", "MAX_THINKING_TOKENS=1", "BASH_DEFAULT_TIMEOUT_MS=1"}
+	for _, role := range lineupRoles {
+		t.Run(role, func(t *testing.T) {
+			h := roleHarness(t, role, fakeConfig{Script: oneRound(structuredRound(`{}`))})
+			h.task.Model = ""
+			s, err := h.start(h.f.options(parent...))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			if _, err := s.Round(context.Background(), executor.Input{}); err != nil {
+				t.Fatal(err)
+			}
+			if slices.Contains(h.f.argv(1), "--model") {
+				t.Error("unexpected --model flag")
+			}
+			for _, kv := range h.f.env(1) {
+				key, _, _ := strings.Cut(kv, "=")
+				for _, p := range parent {
+					if pk, _, _ := strings.Cut(p, "="); key == pk {
+						t.Errorf("%s reached the round", key)
+					}
+				}
+			}
+		})
 	}
-	defer s.Close()
-	if _, err := s.Round(context.Background(), executor.Input{}); err != nil {
-		t.Fatal(err)
-	}
-	for _, arg := range h.f.argv(1) {
-		if arg == "--model" {
-			t.Error("unexpected --model flag")
-		}
-	}
-	for _, kv := range h.f.env(1) {
-		key, _, _ := strings.Cut(kv, "=")
-		if key == "ANTHROPIC_MODEL" || key == "ANTHROPIC_CUSTOM_HEADERS" {
-			t.Errorf("%s reached the round", key)
-		}
+}
+
+func TestRoundGitIgnoresParentRepositorySelectors(t *testing.T) {
+	for _, vars := range [][]string{{"GIT_DIR"}, {"GIT_DIR", "GIT_WORK_TREE"}} {
+		t.Run(strings.Join(vars, "+"), func(t *testing.T) {
+			other := t.TempDir()
+			if out, err := exec.Command("git", "-C", other, "init", "-q").CombinedOutput(); err != nil {
+				t.Fatalf("git init: %v\n%s", err, out)
+			}
+			printed := filepath.Join(t.TempDir(), "git.txt")
+			shell := "git rev-parse --show-toplevel --absolute-git-dir > '" + printed + "'"
+			h := newHarness(t, fakeConfig{Script: oneRound(conformance.RoundScript{Actions: []conformance.Action{{Shell: shell}}, End: "finish"})})
+			var parent []string
+			for _, v := range vars {
+				if v == "GIT_DIR" {
+					parent = append(parent, v+"="+filepath.Join(other, ".git"))
+				} else {
+					parent = append(parent, v+"="+other)
+				}
+			}
+			s, err := h.start(h.f.options(parent...))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			if _, err := s.Round(context.Background(), executor.Input{}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(printed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := h.root + "\n" + filepath.Join(h.root, ".git") + "\n"
+			if string(got) != want {
+				t.Errorf("git printed %q, want %q", got, want)
+			}
+		})
 	}
 }
 

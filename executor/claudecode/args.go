@@ -67,8 +67,9 @@ var stripEnv = []string{
 	"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
 	"ANTHROPIC_PROFILE",
 	// Model selectors must not override Kogen's model choice or runtime configuration.
-	"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
-	"ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
+	"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
+	"CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
 	// Request shaping must come from Kogen's runtime configuration, not the parent.
 	"ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_EXTRA_BODY", "ANTHROPIC_UNIX_SOCKET",
 	// Per-cloud routes and authentication bypasses must not select a parent route.
@@ -92,7 +93,23 @@ var stripEnv = []string{
 	// Kogen's runtime has its own configuration directory (set by childEnv) and updates are
 	// always disabled: an inherited value of either never reaches the child.
 	"CLAUDE_CONFIG_DIR", "DISABLE_UPDATES",
+	// Git repository, index, object-store and namespace selectors and configuration overrides
+	// must not point the child's Git at another repository or configuration; the indexed
+	// GIT_CONFIG_KEY_<n> and GIT_CONFIG_VALUE_<n> are stripEnvPrefixes.
+	"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
+	"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
+	// Claude Code behaviour must come from Kogen's flags and configuration, not the parent.
+	"MAX_THINKING_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "MAX_MCP_OUTPUT_TOKENS",
+	"BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS", "BASH_MAX_OUTPUT_LENGTH",
+	"CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR",
+	"DISABLE_PROMPT_CACHING", "DISABLE_PROMPT_CACHING_HAIKU", "DISABLE_PROMPT_CACHING_SONNET",
+	"DISABLE_PROMPT_CACHING_OPUS", "DISABLE_PROMPT_CACHING_FABLE",
 }
+
+// stripEnvPrefixes removes every variable whose name starts with one of them: Git's indexed
+// configuration overrides.
+var stripEnvPrefixes = []string{"GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"}
 
 // setEnv is set in the child: no background work keeps `-p` open, no auto-memory writes under
 // the user's ~/.claude, no update ever swaps the executable.
@@ -113,7 +130,7 @@ func childEnv(base []string, home, token, configDir string) []string {
 	out := make([]string, 0, len(base)+len(setEnv)+1)
 	for _, kv := range base {
 		k, _, _ := strings.Cut(kv, "=")
-		if !drop[k] {
+		if !drop[k] && !hasStrippedPrefix(k) {
 			out = append(out, kv)
 		}
 	}
@@ -126,6 +143,15 @@ func childEnv(base []string, home, token, configDir string) []string {
 		out = append(out, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR=3")
 	}
 	return out
+}
+
+func hasStrippedPrefix(k string) bool {
+	for _, p := range stripEnvPrefixes {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // roundArgs is the exact argv (without the binary) for round n. There is no positional prompt:
