@@ -1,7 +1,10 @@
 package claudecode
 
 import (
+	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/executor"
@@ -96,5 +99,77 @@ func TestUnansweredHookEvents(t *testing.T) {
 	}
 	if len(hooks) != 2 || len(tools) != 2 {
 		t.Fatalf("events: %v", events)
+	}
+}
+
+// unansweredRound drives one accepted round whose guarded Write calls ids are all pending, each
+// with a target created after its tool_use line; allowed lists the ids with an allow record.
+func unansweredRound(t *testing.T, ids []string, allowed map[string]bool) ([]map[string]any, error) {
+	t.Helper()
+	root := t.TempDir()
+	var events []map[string]any
+	s := &session{a: &adapter{}, root: root, role: executor.RoleBuild, sessionID: "s", pol: policy{Log: filepath.Join(root, "hook.log"), Nonce: "n"}, emit: func(e map[string]any) { events = append(events, e) }}
+	r := &roundRun{s: s, n: 1, init: true}
+	var uses []string
+	for _, id := range ids {
+		uses = append(uses, `{"type":"tool_use","id":"`+id+`","name":"Write","input":{"file_path":"`+id+`.txt"}}`)
+	}
+	if err := r.line([]byte(`{"type":"assistant","message":{"content":[` + strings.Join(uses, ",") + `]}}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if err := os.WriteFile(filepath.Join(root, id+".txt"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if allowed[id] {
+			if err := appendSentinel(s.pol.Log, sentinel{Nonce: "n", Hook: "pretool", ToolUseID: id, Decision: "allow"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := r.line([]byte(`{"type":"result","subtype":"success","is_error":false,"session_id":"s","result":"done"}`)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.finish(0, false, "")
+	return events, err
+}
+
+func TestUnansweredCallsFailBeforeAnyEvent(t *testing.T) {
+	for i := 0; i < 24; i++ {
+		events, err := unansweredRound(t, []string{"call-a", "call-b", "call-c"}, map[string]bool{"call-a": true})
+		if err == nil || !strings.Contains(err.Error(), `"call-b"`) || strings.Contains(err.Error(), `"call-c"`) {
+			t.Fatalf("iteration %d: error %v", i, err)
+		}
+		if len(events) != 0 {
+			t.Fatalf("iteration %d: events emitted for a rejected round: %v", i, events)
+		}
+	}
+}
+
+func TestUnansweredCallsReportedInToolUseOrder(t *testing.T) {
+	ids := []string{"call-6", "call-1", "call-5", "call-2", "call-4", "call-3"}
+	allowed := map[string]bool{}
+	var want []string
+	for _, id := range ids {
+		allowed[id] = true
+		want = append(want, "hook "+id, "tool "+id)
+	}
+	for i := 0; i < 24; i++ {
+		events, err := unansweredRound(t, ids, allowed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, e := range events {
+			kind, _ := e["event"].(string)
+			if kind != "executor_hook" && kind != "executor_tool" {
+				continue
+			}
+			id, _ := e["tool_use_id"].(string)
+			got = append(got, strings.TrimPrefix(kind, "executor_")+" "+id)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("iteration %d: events %v, want %v", i, got, want)
+		}
 	}
 }
