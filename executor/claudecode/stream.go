@@ -46,6 +46,11 @@ type roundRun struct {
 
 	hookLog sentinelLog
 
+	guardedOrder []string             // guarded tool_use_ids in tool_use order
+	hookEvents   map[string]*hookCall // tool_use_id -> the hook events attributed to the call
+	hookCause    string               // set when the round stopped for a hook that did not run
+	hookStderr   string
+
 	lines       int
 	compactions int
 	result      map[string]any // the result event, once seen
@@ -159,7 +164,11 @@ func (r *roundRun) lineReceived(b, received []byte) error {
 		switch sub {
 		case "init":
 			return r.gate(ev)
-		case "hook_started", "hook_response", "plugin_install":
+		case "hook_started":
+			r.hookStarted(ev)
+		case "hook_response":
+			r.hookResponse(ev)
+		case "plugin_install":
 		case "compact_boundary":
 			metadata, _ := ev["compact_metadata"].(map[string]any)
 			trigger, _ := metadata["trigger"].(string)
@@ -287,6 +296,9 @@ func (r *roundRun) toolUses(ev map[string]any) {
 		}
 		r.pending[id] = true
 		if guardedTools[name] {
+			if _, seen := r.guarded[id]; !seen {
+				r.guardedOrder = append(r.guardedOrder, id)
+			}
 			r.guarded[id] = name
 			if _, seen := r.targets[id]; !seen {
 				input, _ := c["input"].(map[string]any)
@@ -294,6 +306,115 @@ func (r *roundRun) toolUses(ev map[string]any) {
 			}
 		}
 	}
+}
+
+// hookCall is the most recent PreToolUse hook start and response attributed to one guarded call.
+type hookCall struct {
+	started  bool
+	hookID   string
+	response *hookResponse
+}
+
+// hookResponse is what is kept of an attributed hook response.
+type hookResponse struct {
+	outcome  string
+	exitCode *int64
+	excerpt  string // bounded and redacted stderr, empty when there is none
+}
+
+// hookStarted attributes a PreToolUse hook start to the earliest pending guarded call of the
+// tool named by the hook, which has no attributed start yet. Claude Code's hook events carry
+// no tool_use_id.
+func (r *roundRun) hookStarted(ev map[string]any) {
+	if event, _ := ev["hook_event"].(string); event != "PreToolUse" {
+		return
+	}
+	hookName, _ := ev["hook_name"].(string)
+	tool, ok := strings.CutPrefix(hookName, "PreToolUse:")
+	hookID, idOK := ev["hook_id"].(string)
+	if !ok || !idOK {
+		return
+	}
+	for _, id := range r.guardedOrder {
+		if !r.pending[id] || r.guarded[id] != tool || r.hookEvents[id] != nil && r.hookEvents[id].started {
+			continue
+		}
+		if r.hookEvents == nil {
+			r.hookEvents = map[string]*hookCall{}
+		}
+		call := r.hookEvents[id]
+		if call == nil {
+			call = &hookCall{}
+			r.hookEvents[id] = call
+		}
+		call.started, call.hookID = true, hookID
+		return
+	}
+}
+
+// hookResponse attributes a PreToolUse hook response to the call whose attributed start has the
+// same hook_id; a later response replaces an earlier one.
+func (r *roundRun) hookResponse(ev map[string]any) {
+	if event, _ := ev["hook_event"].(string); event != "PreToolUse" {
+		return
+	}
+	hookID, ok := ev["hook_id"].(string)
+	if !ok {
+		return
+	}
+	for _, id := range r.guardedOrder {
+		call := r.hookEvents[id]
+		if call == nil || !call.started || call.hookID != hookID {
+			continue
+		}
+		resp := &hookResponse{}
+		resp.outcome, _ = ev["outcome"].(string)
+		if n, ok := ev["exit_code"].(json.Number); ok {
+			if code, err := strconv.ParseInt(n.String(), 10, 64); err == nil {
+				resp.exitCode = &code
+			}
+		}
+		stderr, _ := ev["stderr"].(string)
+		if r.s.a != nil {
+			stderr = redactEnvValues(stderr, secretEnvValues(r.s.a.opts.Env))
+		}
+		resp.excerpt = bound(strings.TrimSpace(stderr), 200)
+		call.response = resp
+		return
+	}
+}
+
+// redactEnvValues replaces each of the secret-named environment values in s.
+func redactEnvValues(s string, values []string) string {
+	for _, v := range values {
+		s = strings.ReplaceAll(s, v, redactMark)
+	}
+	return s
+}
+
+// hookFailure is the stop for a guarded call whose hook did not run. It names the cause from
+// the hook events attributed to the call and keeps it for the round's failure event.
+func (r *roundRun) hookFailure(id, name string) error {
+	cause, excerpt := "not_started", ""
+	if call := r.hookEvents[id]; call != nil && call.started {
+		resp := call.response
+		switch {
+		case resp == nil:
+			cause = "no_response"
+		case resp.outcome == "timeout" || resp.outcome == "cancelled":
+			cause, excerpt = "timeout", resp.excerpt
+		case resp.exitCode != nil:
+			cause, excerpt = "exit_"+strconv.FormatInt(*resp.exitCode, 10), resp.excerpt
+		default:
+			cause, excerpt = "exit_unknown", resp.excerpt
+		}
+	}
+	r.hookCause, r.hookStderr = cause, excerpt
+	detail := "hook did not run for the " + name + " call " + quoteBound(id) + "; the round was stopped; hook_cause " + cause
+	if excerpt != "" {
+		detail += "; hook_stderr " + strconv.Quote(excerpt)
+	}
+	return executor.Fail(executor.ReasonProtocol, detail)
 }
 
 // toolResults emits tool events and enforces hook liveness: a guarded tool call that completed
@@ -345,7 +466,7 @@ func (r *roundRun) toolResults(ev, original map[string]any) error {
 				continue
 			}
 			if !ok {
-				return executor.Fail(executor.ReasonProtocol, "hook did not run for the "+name+" call "+quoteBound(id)+"; the round was stopped")
+				return r.hookFailure(id, name)
 			}
 			r.s.emit(map[string]any{"event": "executor_hook", "round": r.n, "tool_use_id": id, "tool_name": name, "decision": rec.Decision, "hook": "pretool"})
 			if rec.Decision == "deny" {
@@ -373,7 +494,7 @@ func (r *roundRun) checkUnanswered() error {
 		}
 		rec, found := recs[id]
 		if !found && !r.targets[id].unchanged() {
-			return executor.Fail(executor.ReasonProtocol, "hook did not run for the "+name+" call "+quoteBound(id)+"; the round was stopped")
+			return r.hookFailure(id, name)
 		}
 		denied := found && rec.Decision == "deny"
 		if found {

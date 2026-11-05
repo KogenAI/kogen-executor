@@ -649,7 +649,7 @@ func TestRejectedBeforeHookContinues(t *testing.T) {
 
 func TestHooklessCallStillStops(t *testing.T) {
 	t.Parallel()
-	const detail = `hook did not run for the Write call "t1"; the round was stopped`
+	const detail = `hook did not run for the Write call "t1"; the round was stopped; hook_cause not_started`
 	root := t.TempDir()
 	file := filepath.Join(root, "a.txt")
 	reset := func() {

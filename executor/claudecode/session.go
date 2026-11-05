@@ -115,6 +115,12 @@ func (s *session) Round(ctx context.Context, in executor.Input) (executor.RoundR
 			eventDetail = detail
 		}
 		event := map[string]any{"event": "executor_round_failed", "role": s.role, "round": n, "reason": reason, "detail": eventDetail, "deadline_remaining_ms": remaining}
+		if rr.hookCause != "" {
+			event["hook_cause"] = rr.hookCause
+			if rr.hookStderr != "" {
+				event["hook_stderr"] = rr.hookStderr
+			}
+		}
 		if rr.artifact != "" {
 			event["artifact"] = rr.artifact
 			event["kept_bytes"] = rr.keptBytes
