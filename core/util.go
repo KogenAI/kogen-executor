@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-loop/sys"
@@ -89,7 +89,7 @@ func Display(v any) string {
 		}
 		exp, _ := strconv.Atoi(exponent) // FormatFloat always emits a valid exponent.
 		scientific = mantissa + "e" + strconv.Itoa(exp)
-		if len(scientific) < len(fixed) {
+		if math.Abs(x) >= 1<<53 || len(scientific) < len(fixed) {
 			return scientific
 		}
 		return fixed
@@ -97,7 +97,7 @@ func Display(v any) string {
 	return fmt.Sprint(v)
 }
 
-// InspectString renders a string the way Elixir's inspect/1 does.
+// InspectString renders a string the way Elixir's inspect/1 does (binaries: :as_strings).
 func InspectString(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
@@ -108,6 +108,8 @@ func InspectString(s string) string {
 			b.WriteString(`\"`)
 		case r == '\\':
 			b.WriteString(`\\`)
+		case r == '#' && i+1 < len(rs) && rs[i+1] == '{':
+			b.WriteString(`\#`)
 		case r == '\n':
 			b.WriteString(`\n`)
 		case r == '\t':
@@ -126,18 +128,39 @@ func InspectString(s string) string {
 			b.WriteString(`\v`)
 		case r == 0:
 			b.WriteString(`\0`)
-		case r == '#' && i+1 < len(rs) && rs[i+1] == '{':
-			b.WriteString(`\#`)
-		case r < 0x20 || r == 0x7f:
-			fmt.Fprintf(&b, `\x%02X`, r)
-		case !unicode.IsPrint(r):
+		case r == 0x7f:
+			b.WriteString(`\d`)
+		case isConfusable(r):
 			fmt.Fprintf(&b, `\u%04X`, r)
-		default:
+		case isElixirPrintable(r):
 			b.WriteRune(r)
+		case r < 0x100:
+			fmt.Fprintf(&b, `\x%02X`, r)
+		default:
+			fmt.Fprintf(&b, `\x{%04X}`, r)
 		}
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+// isConfusable reports whether Elixir writes r as a \u escape although it is printable.
+func isConfusable(r rune) bool {
+	switch {
+	case r == 0xA0, r == 0x34F, r == 0x61C, r == 0xFEFF:
+		return true
+	case r >= 0x2000 && r <= 0x200F, r >= 0x2028 && r <= 0x202E,
+		r >= 0x205F && r <= 0x2064, r >= 0x2066 && r <= 0x2069,
+		r >= 0xFFF9 && r <= 0xFFFC:
+		return true
+	}
+	return false
+}
+
+// isElixirPrintable reports whether Elixir's inspect writes r raw (its printable ranges).
+func isElixirPrintable(r rune) bool {
+	return r >= 0x20 && r <= 0x7E || r >= 0xA0 && r <= 0xD7FF ||
+		r >= 0xE000 && r <= 0xFFFD || r >= 0x10000 && r <= 0x10FFFF
 }
 
 // MaterialText is the text of a text block of a message, if it is one.
