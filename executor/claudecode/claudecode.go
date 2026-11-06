@@ -59,6 +59,11 @@ type Options struct {
 	// SettingSources is passed to --setting-sources. The default "" isolates the run from the
 	// user's, project's and local Claude Code settings, hooks and CLAUDE.md.
 	SettingSources string
+	// TranscriptRetention is how long a Claude Code session transcript under the configuration
+	// folder's projects directory is kept after its last modification. Every Start removes the
+	// older ones, except its own session's. nil means 24 hours; a value of 0 or less disables
+	// pruning.
+	TranscriptRetention *time.Duration
 }
 
 // New returns the Claude Code executor.
@@ -381,6 +386,11 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 		return nil, executor.Fail(executor.ReasonFailed, "cannot write the hook settings: "+err.Error())
 	}
 
+	var transcripts map[string]any
+	if retention, ok := a.transcriptRetention(); ok {
+		transcripts = pruneTranscripts(ConfigDir(a.opts.Home), time.Now(), retention, sessionID).event()
+	}
+
 	s := &session{
 		a: a, task: t, emit: emit, bin: bin, env: env, root: root, dir: dir,
 		sessionID: sessionID, version: version, settingsPath: settingsPath, pol: pol,
@@ -413,6 +423,9 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 	}
 	if tightened {
 		started["artifact_dir_mode_tightened"] = true
+	}
+	if transcripts != nil {
+		started["transcripts"] = transcripts
 	}
 	emit(started)
 	return s, nil
