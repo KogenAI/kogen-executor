@@ -242,8 +242,8 @@ func (r *roundRun) addRateLimit(event map[string]any) {
 
 // gate is the per-round acceptance gate on the init event (audit section B).
 func (r *roundRun) gate(ev map[string]any) error {
-	r.modelSeen = true
 	r.model, _ = ev["model"].(string)
+	r.modelSeen = r.model != ""
 	if src, _ := ev["apiKeySource"].(string); src != "none" {
 		return executor.Fail(executor.ReasonAuthRefused, "Claude Code reports its credential source as "+quoteBound(src)+", not the subscription sign-in (\"none\" API key); the round was stopped")
 	}
