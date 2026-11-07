@@ -188,23 +188,58 @@ func seamOrigin() (origin string, set bool, err error) {
 	return v, true, nil
 }
 
-// runtimeUsable distinguishes an absent entry from one that requires user intervention.
-func runtimeUsable(home string) (bool, error) {
+// ownerModeProblem names what is wrong with a path owned by owner with the given mode, or ""
+// when only uid owns it and nobody else can write it.
+func ownerModeProblem(uid, owner uint32, mode os.FileMode) string {
+	switch {
+	case owner != uid:
+		return "owned by another user"
+	case mode.Perm()&0o020 != 0:
+		return "writable by group"
+	case mode.Perm()&0o002 != 0:
+		return "writable by others"
+	}
+	return ""
+}
+
+// ownershipProblem is ownerModeProblem of an existing path, with links followed.
+func ownershipProblem(path string, info os.FileInfo) (string, error) {
+	if info == nil {
+		var err error
+		if info, err = os.Stat(path); err != nil {
+			return "", err
+		}
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", errors.New("the owner is not readable")
+	}
+	return ownerModeProblem(uint32(os.Geteuid()), st.Uid, info.Mode()), nil
+}
+
+// inspectRuntime, the resolved file's info when present, distinguishes an absent entry from one that requires user intervention. A
+// present runtime is the one definition shared by install and use: a regular, executable,
+// non-empty file of the pinned size (unless the test origin is set), owned by the current user
+// with its version folder and the managed root, none of them writable by group or others.
+func (a *adapter) inspectRuntime() (os.FileInfo, bool, error) {
+	home := a.opts.Home
 	p := RuntimePath(home)
+	dir := RuntimeDir(home)
+	remedy := "; remove " + dir + " and run again"
 	info, err := os.Lstat(p)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return false, unavailable("cannot inspect " + p + ": " + err.Error())
+		return nil, false, unavailable("cannot inspect " + p + ": " + err.Error())
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		info, err = os.Stat(p)
 		if errors.Is(err, os.ErrNotExist) {
-			return false, unavailable("Kogen's Claude Code at " + p + " is a dangling symlink; remove " + RuntimeDir(home) + " and run again")
+			return nil, false, unavailable("Kogen's Claude Code at " + p + " is a dangling symlink" + remedy)
 		}
 		if err != nil {
-			return false, unavailable("cannot inspect " + p + ": " + err.Error())
+			return nil, false, unavailable("cannot inspect " + p + ": " + err.Error())
 		}
 	}
 	kind := ""
@@ -219,9 +254,30 @@ func runtimeUsable(home string) (bool, error) {
 		kind = "not executable"
 	}
 	if kind != "" {
-		return false, unavailable("Kogen's Claude Code at " + p + " is " + kind + "; remove " + RuntimeDir(home) + " and run again")
+		return nil, false, unavailable("Kogen's Claude Code at " + p + " is " + kind + remedy)
 	}
-	return true, nil
+	if _, seam := os.LookupEnv(SeamEnv); !seam {
+		if want, ok := pinFor(a.goos, a.goarch); ok && info.Size() != want.size {
+			return nil, false, unavailable(fmt.Sprintf("Kogen's Claude Code at %s is %d bytes, expected %d%s", p, info.Size(), want.size, remedy))
+		}
+	}
+	for _, c := range []struct {
+		what, path string
+		info       os.FileInfo
+	}{
+		{"Kogen's Claude Code at " + p, p, info},
+		{"Kogen's Claude Code folder " + dir, dir, nil},
+		{"Kogen's Claude Code root " + Root(home), Root(home), nil},
+	} {
+		problem, err := ownershipProblem(c.path, c.info)
+		if err != nil {
+			return nil, false, unavailable("cannot inspect " + c.path + ": " + err.Error())
+		}
+		if problem != "" {
+			return nil, false, unavailable(c.what + " is " + problem + remedy)
+		}
+	}
+	return info, true, nil
 }
 
 // ensureRuntime makes the pinned runtime and Kogen's configuration directory exist before the
@@ -251,7 +307,7 @@ func (a *adapter) ensureRuntime(ctx context.Context) error {
 			return unavailable("cannot secure " + dir + ": " + err.Error())
 		}
 	}
-	if present, err := runtimeUsable(a.opts.Home); err != nil || present {
+	if _, present, err := a.inspectRuntime(); err != nil || present {
 		return err
 	}
 	return a.install(ctx)
@@ -281,7 +337,7 @@ func (a *adapter) install(ctx context.Context) error {
 			return unavailable("cannot remove the unfinished installation " + p + ": " + err.Error())
 		}
 	}
-	if present, err := runtimeUsable(a.opts.Home); err != nil || present {
+	if _, present, err := a.inspectRuntime(); err != nil || present {
 		return err
 	}
 	partial, err := os.MkdirTemp(root, ".partial-")

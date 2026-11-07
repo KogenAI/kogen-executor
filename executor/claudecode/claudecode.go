@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -93,6 +94,11 @@ type adapter struct {
 	downloadHeader     time.Duration
 	downloadRetryDelay time.Duration
 	sync               func(*os.File) error
+
+	versionMu     sync.Mutex
+	versionKnown  bool
+	versionID     fileIdentity
+	versionAnswer string
 }
 
 // Describe reports the executor's capabilities and exact version. It never fails: an
@@ -150,20 +156,43 @@ func roleCapabilities() map[string]executor.RoleCapabilities {
 	return map[string]executor.RoleCapabilities{executor.RoleShape: shape, executor.RoleBuild: build, executor.RoleReview: review}
 }
 
-// binary is the one executable Kogen runs, never resolved on PATH.
+// binary is the one executable Kogen runs, never resolved on PATH, accepted only when it passes
+// the checks of inspectRuntime.
 func (a *adapter) binary() (string, error) {
+	p, _, err := a.verifiedBinary()
+	return p, err
+}
+
+// verifiedBinary is binary together with the file's identity at the time of the checks.
+func (a *adapter) verifiedBinary() (string, fileIdentity, error) {
 	if a.opts.Home == "" {
-		return "", unavailable("cannot locate your home directory for Kogen's Claude Code runtime")
+		return "", fileIdentity{}, unavailable("cannot locate your home directory for Kogen's Claude Code runtime")
 	}
 	p := RuntimePath(a.opts.Home)
-	present, err := runtimeUsable(a.opts.Home)
+	info, present, err := a.inspectRuntime()
 	if err != nil {
-		return "", err
+		return "", fileIdentity{}, err
 	}
 	if !present {
-		return "", unavailable("Kogen's Claude Code " + Version + " is not installed at " + p)
+		return "", fileIdentity{}, unavailable("Kogen's Claude Code " + Version + " is not installed at " + p)
 	}
-	return p, nil
+	return p, identityOf(info), nil
+}
+
+// fileIdentity is what a remembered version answer is bound to: the same file, size and
+// modification time.
+type fileIdentity struct {
+	dev, ino uint64
+	size     int64
+	mtime    int64
+}
+
+func identityOf(info os.FileInfo) fileIdentity {
+	id := fileIdentity{size: info.Size(), mtime: info.ModTime().UnixNano()}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		id.dev, id.ino = uint64(st.Dev), uint64(st.Ino)
+	}
+	return id
 }
 
 // childEnv is the environment of every child: the existing rules plus Kogen's configuration
@@ -172,12 +201,19 @@ func (a *adapter) childEnv(home, token string) []string {
 	return childEnv(a.opts.Env, home, token, ConfigDir(a.opts.Home))
 }
 
-// claudeVersion observes the currently managed executable on each call.
+// claudeVersion is the answer of the currently managed executable. It is remembered only with
+// the identity of the file that gave it, so a replaced executable is asked again.
 func (a *adapter) claudeVersion(ctx context.Context) (string, error) {
-	bin, err := a.binary()
+	bin, id, err := a.verifiedBinary()
 	if err != nil {
 		return "", err
 	}
+	a.versionMu.Lock()
+	defer a.versionMu.Unlock()
+	if a.versionKnown && a.versionID == id {
+		return a.versionAnswer, nil
+	}
+	a.versionKnown = false
 	out, err := a.run(ctx, bin, nil, "", "--version")
 	if err != nil {
 		return "", err
@@ -186,6 +222,7 @@ func (a *adapter) claudeVersion(ctx context.Context) (string, error) {
 	if v == "" || strings.Contains(v, "\n") || len(v) > 200 {
 		return "", executor.Fail(executor.ReasonUnavailable, "`claude --version` printed an unexpected answer")
 	}
+	a.versionKnown, a.versionID, a.versionAnswer = true, id, v
 	return v, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,6 +84,13 @@ exit 0
 	}
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
+	}
+	// The runtime must have the pinned size of the platform, or the adapter refuses it; the
+	// script exits before the sparse padding.
+	if size := pinnedRuntimeSize(); size > 0 {
+		if err := os.Truncate(path, size); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return f
 }
@@ -224,4 +232,16 @@ func realDir(t testing.TB) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// pinnedRuntimeSize is the size of the pinned Claude Code executable of this platform, which
+// the adapter checks before it runs the runtime (the same numbers as its manifest pin).
+func pinnedRuntimeSize() int64 {
+	switch runtime.GOOS + "/" + runtime.GOARCH {
+	case "darwin/arm64":
+		return 319598464
+	case "linux/amd64":
+		return 337814032
+	}
+	return 0
 }

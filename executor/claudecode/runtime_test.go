@@ -358,9 +358,7 @@ func TestConfigDirectoryPermissions(t *testing.T) {
 			if err := os.MkdirAll(RuntimeDir(home), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(RuntimePath(home), []byte("runtime"), 0o700); err != nil {
-				t.Fatal(err)
-			}
+			writeStandIn(t, RuntimePath(home), "runtime\n", 0o700)
 			config := ConfigDir(home)
 			target := config
 			if kind == "linked" {

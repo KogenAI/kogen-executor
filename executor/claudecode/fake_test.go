@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -451,9 +452,7 @@ func (f *fakeEnv) options(extraEnv ...string) Options {
 		if err := os.MkdirAll(RuntimeDir(home), 0o700); err != nil {
 			f.t.Fatal(err)
 		}
-		if err := os.Symlink(exe, RuntimePath(home)); err != nil {
-			f.t.Fatal(err)
-		}
+		writeStandIn(f.t, RuntimePath(home), "#!/bin/sh\nexec '"+strings.ReplaceAll(exe, "'", `'\''`)+"' \"$@\"\n", 0o755)
 	}
 	env := append(os.Environ(), "KOGEN_FAKE_CLAUDE="+filepath.Join(f.cfgDir, "config.json"))
 	return Options{Home: home, HookCommand: []string{exe}, Env: append(env, extraEnv...), KillGrace: 2 * time.Second}
@@ -527,4 +526,21 @@ func (d *driver) Feedback(t *testing.T) []string {
 
 func TestConformance(t *testing.T) {
 	conformance.Run(t, &driver{})
+}
+
+// writeStandIn writes script at path as a stand-in runtime of the pinned size of this platform
+// (sparse padding after the script, which ends with exit), the size the adapter checks before it runs anything.
+func writeStandIn(t testing.TB, path, script string, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(script+"exit\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if want, ok := pinFor(runtime.GOOS, runtime.GOARCH); ok {
+		if err := os.Truncate(path, want.size); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
 }

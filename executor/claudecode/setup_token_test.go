@@ -20,9 +20,7 @@ func TestSetupTokenInterruptedIsRunFailure(t *testing.T) {
 	if err := os.MkdirAll(RuntimeDir(home), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(RuntimePath(home), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeStandIn(t, RuntimePath(home), "#!/bin/sh\nexec sleep 30\n", 0o755)
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	token, err := SetupToken(ctx, home, nil)

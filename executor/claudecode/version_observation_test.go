@@ -23,9 +23,7 @@ func TestStartReobservesReplacementWithoutDescribe(t *testing.T) {
 			script := func(version string) []byte {
 				return []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo '" + version + " (Claude Code)'; else echo called >> '" + calls + "'; fi\n")
 			}
-			if err := os.WriteFile(path, script(Version), 0755); err != nil {
-				t.Fatal(err)
-			}
+			writeStandIn(t, path, string(script(Version)), 0755)
 			a := New(Options{Home: home, HookCommand: []string{"unused"}})
 			if got := a.Describe().Version; got != "claude-code "+Version+" (Claude Code)" {
 				t.Fatal(got)
@@ -34,9 +32,7 @@ func TestStartReobservesReplacementWithoutDescribe(t *testing.T) {
 			if change == "rename" {
 				target += ".new"
 			}
-			if err := os.WriteFile(target, script("0.0.0"), 0755); err != nil {
-				t.Fatal(err)
-			}
+			writeStandIn(t, target, string(script("0.0.0")), 0755)
 			if change == "rename" {
 				if err := os.Rename(target, path); err != nil {
 					t.Fatal(err)
@@ -68,9 +64,7 @@ func TestDescribeAfterExecutableBecomesUnusable(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho '"+Version+" (Claude Code)'\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	writeStandIn(t, path, "#!/bin/sh\necho '"+Version+" (Claude Code)'\n", 0755)
 	a := New(Options{Home: home})
 	if got := a.Describe().Version; got != "claude-code "+Version+" (Claude Code)" {
 		t.Fatal(got)
