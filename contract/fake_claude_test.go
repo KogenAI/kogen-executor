@@ -53,7 +53,7 @@ STATE=` + shQuote(f.state) + `
 CWD=` + shQuote(o.Checkout) + `
 KEYSRC=` + shQuote(o.APIKeySource) + `
 if [ "$1" = "--version" ]; then
-  echo "2.1.312 (Claude Code)"
+  echo "` + claudecode.Version + ` (Claude Code)"
   exit 0
 fi
 if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
@@ -73,7 +73,7 @@ for a in "$@"; do
   esac
   prev=$a
 done
-printf '{"type":"system","subtype":"init","cwd":"%s","session_id":"%s","mcp_servers":[],"permissionMode":"acceptEdits","apiKeySource":"%s","claude_code_version":"2.1.312","model":"claude-sonnet-5-5"}\n' "$CWD" "$sid" "$KEYSRC"
+printf '{"type":"system","subtype":"init","cwd":"%s","session_id":"%s","mcp_servers":[],"permissionMode":"acceptEdits","apiKeySource":"%s","claude_code_version":"` + claudecode.Version + `","model":"claude-sonnet-5-5"}\n' "$CWD" "$sid" "$KEYSRC"
 if [ -f "$STATE/round-$n.jsonl" ]; then sed "s/@SID@/$sid/g" "$STATE/round-$n.jsonl"; fi
 exit 0
 `

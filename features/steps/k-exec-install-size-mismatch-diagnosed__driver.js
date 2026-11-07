@@ -192,7 +192,7 @@ function rows() {
 }
 // Known-bad results observed from this capture: the unchanged tree's single refusal message, and
 // a scratch installer that read the body without the one-byte-past limit.
-const old = 'the downloaded Claude Code 2.1.312 does not match its pinned SHA-256; nothing was installed';
+const old = 'the downloaded Claude Code 2.1.318 does not match its pinned SHA-256; nothing was installed';
 const refused = {requests: 1, success: false, reason: 'executor/unavailable', detail: old, installed: false, runtimeDir: false, partialCount: 0, closedBeforeBody: false, fileWithinBound: true};
 const known = {
   page: [refused],

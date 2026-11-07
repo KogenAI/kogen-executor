@@ -3,7 +3,7 @@ Feature: The managed Claude Code runtime runs its own setup-token sign-in
   Scenario: Runtime missing: SetupToken installs it once, runs setup-token and returns the token
     Then e-claude-setup-token-managed-runtime: SetupToken runs with the "missing" fake runtime
     And e-claude-setup-token-managed-runtime: the pinned runtime was downloaded 1 time
-    And e-claude-setup-token-managed-runtime: out contains "kogen: installing Claude Code 2.1.312 into {home}/.kogen/claude-code/2.1.312"
+    And e-claude-setup-token-managed-runtime: out contains "kogen: installing Claude Code 2.1.318 into {home}/.kogen/claude-code/2.1.318"
     And e-claude-setup-token-managed-runtime: the fake runtime ran once with the argument "setup-token"
     And e-claude-setup-token-managed-runtime: the fake runtime ran with Kogen's configuration directory
     And e-claude-setup-token-managed-runtime: the fake runtime read "PASTED-CODE-123" from its standard input
@@ -63,7 +63,7 @@ Feature: The managed Claude Code runtime runs its own setup-token sign-in
     And e-claude-setup-token-managed-runtime: the error is unavailable and says "cannot install Kogen's Claude Code: "
     And e-claude-setup-token-managed-runtime: the error is unavailable and says "HTTP 404 Not Found"
     And e-claude-setup-token-managed-runtime: the error names the retry command
-    And e-claude-setup-token-managed-runtime: out contains "kogen: installing Claude Code 2.1.312 into {home}/.kogen/claude-code/2.1.312"
+    And e-claude-setup-token-managed-runtime: out contains "kogen: installing Claude Code 2.1.318 into {home}/.kogen/claude-code/2.1.318"
     And e-claude-setup-token-managed-runtime: the token appears neither in out nor in the error
 
   Scenario: Dependencies, existing tests and the behaviour of New, Probe and the roles are kept while SetupToken is added

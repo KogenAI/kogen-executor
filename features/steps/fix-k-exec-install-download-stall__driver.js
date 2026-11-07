@@ -245,13 +245,13 @@ module.exports = {run, verify};
 
 // Observer controls: known-good reports are accepted, every single mutation is rejected.
 if (require.main === module) {
-  const base = 'http://127.0.0.1:9/2.1.312';
+  const base = 'http://127.0.0.1:9/2.1.318';
   const binaryURL = `${base}/linux-x64/claude`;
   const manifestURL = `${base}/manifest.json`;
-  const fail = (url, detail) => `executor/unavailable: cannot download Claude Code 2.1.312 from ${url}: ${detail}`;
+  const fail = (url, detail) => `executor/unavailable: cannot download Claude Code 2.1.318 from ${url}: ${detail}`;
   const retry = (n) => `kogen: download attempt ${n} failed: ${fail(binaryURL, 'the server did not answer')}; retry after pause\n`;
-  const installing = 'kogen: installing Claude Code 2.1.312 into /tmp/h/.kogen/claude-code/2.1.312\n';
-  const installedLine = 'kogen: installed Claude Code 2.1.312 (sha256 b9e9cd89c437f300c8f057ea515b19223c6b53643f328cb58bbc04b4b01fe4ea)\n';
+  const installing = 'kogen: installing Claude Code 2.1.318 into /tmp/h/.kogen/claude-code/2.1.318\n';
+  const installedLine = 'kogen: installed Claude Code 2.1.318 (sha256 b9e9cd89c437f300c8f057ea515b19223c6b53643f328cb58bbc04b4b01fe4ea)\n';
   const report = (o) => ({mode: 'x', error: '', stderr: installing, binaryRequests: 1, manifestRequests: 1, endAfterCancel: false, hungMs: [], elapsedMs: 10, partials: 0, lockFree: true, installed: false, binaryURL, manifestURL, ...o});
   const stall = {outcome: 'unavailable', binaryRequests: 1, manifestRequests: 1, endAfterCancel: true, retryLines: 0, names: 'binary', stalled: true, short: false, minElapsedMs: 150, maxElapsedMs: 3000};
   const cases = [
@@ -261,7 +261,7 @@ if (require.main === module) {
     [report({mode: 'late-error', error: fail(binaryURL, 'connection stalled'), endAfterCancel: true, elapsedMs: 202}), stall],
     [report({mode: 'prompt-eof', stderr: installing + installedLine, elapsedMs: 6, installed: true}),
       {outcome: 'installed', binaryRequests: 1, manifestRequests: 1, endAfterCancel: false, retryLines: 0, stalled: false, maxElapsedMs: 3000}],
-    [report({mode: 'short-prompt', error: 'executor/unavailable: the downloaded Claude Code 2.1.312 is shorter than its pinned size: received 19 bytes, expected 39; nothing was installed', elapsedMs: 5}),
+    [report({mode: 'short-prompt', error: 'executor/unavailable: the downloaded Claude Code 2.1.318 is shorter than its pinned size: received 19 bytes, expected 39; nothing was installed', elapsedMs: 5}),
       {outcome: 'unavailable', binaryRequests: 1, manifestRequests: 1, endAfterCancel: false, retryLines: 0, stalled: false, short: true, maxElapsedMs: 3000}],
     [report({mode: 'silent-headers', error: fail(binaryURL, 'the server did not answer; 3 attempts'), stderr: installing + retry(1) + retry(2), binaryRequests: 3, hungMs: [200, 201, 200], elapsedMs: 632}),
       {outcome: 'unavailable', binaryRequests: 3, manifestRequests: 1, endAfterCancel: false, retryLines: 2, names: 'binary', noAnswer: true, attempts3: true, stalled: false, hung: 3, hungWithinBound: true, maxElapsedMs: 3000}],
@@ -274,7 +274,7 @@ if (require.main === module) {
     {endAfterCancel: !r.endAfterCancel}, {elapsedMs: 9000},
     {stderr: r.stderr + 'kogen: download attempt 9 failed: other; retry after pause\n'},
     r.error === '' ? {error: fail(binaryURL, 'connection stalled')} : {error: r.error.replace('executor/unavailable', 'executor/deadline')},
-    ...(r.error.endsWith('connection stalled') ? [{error: r.error.replace('connection stalled', 'connection reset by peer')}, {error: 'executor/unavailable: the downloaded Claude Code 2.1.312 is shorter than its pinned size: received 19 bytes, expected 39; nothing was installed'}, {error: r.error.replace(binaryURL, 'elsewhere')}, {elapsedMs: 20}] : []),
+    ...(r.error.endsWith('connection stalled') ? [{error: r.error.replace('connection stalled', 'connection reset by peer')}, {error: 'executor/unavailable: the downloaded Claude Code 2.1.318 is shorter than its pinned size: received 19 bytes, expected 39; nothing was installed'}, {error: r.error.replace(binaryURL, 'elsewhere')}, {elapsedMs: 20}] : []),
     ...(r.mode === 'late-eof' ? [{elapsedMs: 20}] : []),
     ...(r.error.includes('shorter') ? [{error: fail(binaryURL, 'connection stalled')}] : []),
     ...(r.error.includes('did not answer') ? [{error: r.error.replace('the server did not answer', 'connection stalled')}, {hungMs: r.hungMs.map(() => 50)}, {hungMs: [...r.hungMs, 5000]}] : []),

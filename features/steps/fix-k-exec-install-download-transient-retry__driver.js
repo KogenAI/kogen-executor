@@ -218,7 +218,7 @@ function run(mode) {
 
 // observe derives the judged facts from a raw report.
 function observe(r) {
-  const prefix = `executor/unavailable: cannot download Claude Code 2.1.312 from ${r.binaryURL}: `;
+  const prefix = `executor/unavailable: cannot download Claude Code 2.1.318 from ${r.binaryURL}: `;
   const shape = (q) => JSON.stringify([q.headerNames, q.userAgent]);
   const firsts = r.requests.filter((q) => !q.path.startsWith('/moved/'));
   const hops = r.requests.filter((q) => q.path.startsWith('/moved/'));
@@ -249,11 +249,11 @@ module.exports = {run, verify};
 // Observer controls: the reports recorded on unchanged main are accepted, every single
 // mutation of them is rejected.
 if (require.main === module) {
-  const binaryURL = 'http://127.0.0.1:9/2.1.312/linux-x64/claude';
-  const manifestPath = '/2.1.312/manifest.json';
-  const binaryPath = '/2.1.312/linux-x64/claude';
-  const installing = 'kogen: installing Claude Code 2.1.312 into /Users/kogen-runner/work.noindex/scratch/delivery/t1106/go/TestIntentDownloadPolicyCapture2802804938/001/.kogen/claude-code/2.1.312\n';
-  const fail = (cause) => `executor/unavailable: cannot download Claude Code 2.1.312 from ${binaryURL}: ${cause}`;
+  const binaryURL = 'http://127.0.0.1:9/2.1.318/linux-x64/claude';
+  const manifestPath = '/2.1.318/manifest.json';
+  const binaryPath = '/2.1.318/linux-x64/claude';
+  const installing = 'kogen: installing Claude Code 2.1.318 into /Users/kogen-runner/work.noindex/scratch/delivery/t1106/go/TestIntentDownloadPolicyCapture2802804938/001/.kogen/claude-code/2.1.318\n';
+  const fail = (cause) => `executor/unavailable: cannot download Claude Code 2.1.318 from ${binaryURL}: ${cause}`;
   const retry = (n, cause) => `kogen: download attempt ${n} failed: ${fail(cause)}; retry after pause\n`;
   const request = (p, headerNames = []) => ({headerNames, path: p, userAgent: ''});
   const exhausted = (mode, cause) => [
@@ -270,7 +270,7 @@ if (require.main === module) {
     exhausted('silent-headers', 'the server did not answer'),
     [{binaryURL, error: '', installed: true, kind: 'none', lockFree: true, mode: 'redirect', panic: '', partials: 0,
       requests: [request(manifestPath), request('/moved/manifest.json', ['Referer']), request(binaryPath), request('/moved/linux-x64/claude', ['Referer'])],
-      stderr: installing + 'kogen: installed Claude Code 2.1.312 (sha256 b9e9cd89c437f300c8f057ea515b19223c6b53643f328cb58bbc04b4b01fe4ea)\n'},
+      stderr: installing + 'kogen: installed Claude Code 2.1.318 (sha256 b9e9cd89c437f300c8f057ea515b19223c6b53643f328cb58bbc04b4b01fe4ea)\n'},
       {kind: 'none', panic: '', detail: null, paths: [manifestPath, '/moved/manifest.json', binaryPath, '/moved/linux-x64/claude'], retryLines: 0, sameShape: true}],
   ];
   const mutations = (r) => {
@@ -287,7 +287,7 @@ if (require.main === module) {
       {requests: withRequest(r.requests.length - 1, {...r.requests[r.requests.length - 1], headerNames: r.requests[r.requests.length - 1].headerNames.length ? [] : ['Referer']})},
       {stderr: r.stderr + retry(3, 'other')},
       r.error === '' ? {error: fail('HTTP 302 Found'), installed: false, kind: 'executor/unavailable'} : {error: r.error.replace('; 3 attempts', '')},
-      ...(r.error === '' ? [] : [{error: r.error.replace(binaryURL, 'http://127.0.0.1:9/2.1.312/manifest.json')}, {error: '', installed: true, kind: 'none'}]),
+      ...(r.error === '' ? [] : [{error: r.error.replace(binaryURL, 'http://127.0.0.1:9/2.1.318/manifest.json')}, {error: '', installed: true, kind: 'none'}]),
     ];
   };
   if (process.argv[2] === 'good') {

@@ -21,12 +21,12 @@ import (
 )
 
 func TestPinTable(t *testing.T) {
-	if Version != "2.1.312" {
+	if Version != "2.1.318" {
 		t.Fatalf("version %q", Version)
 	}
 	for goos, want := range map[string]pin{
-		"darwin/arm64": {"darwin-arm64", "6b5ec691195e551b02c41df9f7d723f4ea61eaa03c2df90acefe3736f1aeb620", 275988512},
-		"linux/amd64":  {"linux-x64", "4f4178ce41d83e23341ebfbaecdbcf8ea6bf7baea0690025abe49eeec3a5d01d", 293592432},
+		"darwin/arm64": {"darwin-arm64", "677a2ea7bf576cedd20e191d973914ed8a41796f53a63b1923381ddc4d5b5e7d", 319598464},
+		"linux/amd64":  {"linux-x64", "708c77b204db30086ff6f1ed34577bda03e1be74ced80557cbf7b54249ebf0bd", 337814032},
 	} {
 		parts := strings.Split(goos, "/")
 		if got, ok := pinFor(parts[0], parts[1]); !ok || got != want {
@@ -41,7 +41,7 @@ func TestPinTable(t *testing.T) {
 	if got, want := UnsupportedMessage("windows", "amd64"), "Kogen's Claude Code runtime supports macOS on Apple Silicon and Linux x86-64 only, not windows/amd64"; got != want {
 		t.Errorf("message %q", got)
 	}
-	if got := RuntimePath("/h"); got != "/h/.kogen/claude-code/2.1.312/claude" {
+	if got := RuntimePath("/h"); got != "/h/.kogen/claude-code/"+Version+"/claude" {
 		t.Errorf("path %q", got)
 	}
 }
@@ -114,9 +114,9 @@ func newSeam(t *testing.T, binary []byte, checksum string, serve func(w http.Res
 		s.requests = append(s.requests, r.URL.Path)
 		s.mu.Unlock()
 		switch r.URL.Path {
-		case "/2.1.312/manifest.json":
-			fmt.Fprintf(w, `{"version":"2.1.312","platforms":{"linux-x64":{"binary":"claude","checksum":%q,"size":%d}}}`, checksum, len(binary))
-		case "/2.1.312/linux-x64/claude":
+		case "/" + Version + "/manifest.json":
+			fmt.Fprintf(w, `{"version":"`+Version+`","platforms":{"linux-x64":{"binary":"claude","checksum":%q,"size":%d}}}`, checksum, len(binary))
+		case "/" + Version + "/linux-x64/claude":
 			s.downloads.Add(1)
 			if serve != nil {
 				serve(w, r, binary)
@@ -153,14 +153,14 @@ func entries(t *testing.T, dir string) []string {
 
 func TestInstallsThePinnedRuntime(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "runs")
-	binary := script("2.1.312 (Claude Code)", log)
+	binary := script(Version+" (Claude Code)", log)
 	s := newSeam(t, binary, "", nil)
 	home := t.TempDir()
 	var stderr bytes.Buffer
 	if err := installer(home, &stderr).ensureRuntime(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := "kogen: installing Claude Code 2.1.312 into " + RuntimeDir(home) + "\nkogen: installed Claude Code 2.1.312 (sha256 " + sum(binary) + ")\n"
+	want := "kogen: installing Claude Code " + Version + " into " + RuntimeDir(home) + "\nkogen: installed Claude Code " + Version + " (sha256 " + sum(binary) + ")\n"
 	if stderr.String() != want {
 		t.Fatalf("progress %q, want %q", stderr.String(), want)
 	}
@@ -173,7 +173,7 @@ func TestInstallsThePinnedRuntime(t *testing.T) {
 			t.Errorf("%s: %v %v", path, st, err)
 		}
 	}
-	if names := entries(t, Root(home)); strings.Join(names, " ") != "2.1.312 config install.lock" {
+	if names := entries(t, Root(home)); strings.Join(names, " ") != Version+" config install.lock" {
 		t.Fatalf("entries %v", names)
 	}
 	// Only the verification ran the downloaded bytes, from the partial directory.
@@ -189,7 +189,7 @@ func TestInstallsThePinnedRuntime(t *testing.T) {
 
 func TestInstallRefusals(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "runs")
-	good := script("2.1.312 (Claude Code)", log)
+	good := script(Version+" (Claude Code)", log)
 	cases := []struct {
 		name   string
 		binary []byte
@@ -198,16 +198,16 @@ func TestInstallRefusals(t *testing.T) {
 		want   string
 		ran    bool
 	}{
-		{"digest mismatch", good, sum([]byte("other")), nil, "the downloaded Claude Code 2.1.312 does not match its pinned SHA-256; nothing was installed", false},
-		{"size mismatch", good, "", func(w http.ResponseWriter, r *http.Request, b []byte) { w.Write(append(append([]byte{}, b...), '#')) }, fmt.Sprintf("cannot download Claude Code 2.1.312 from %%s/2.1.312/linux-x64/claude: the response announces %d bytes, expected %d; nothing was installed", len(good)+1, len(good)), false},
-		{"another version", script("2.1.314 (Claude Code)", log), "", nil, "the downloaded Claude Code reports 2.1.314 (Claude Code), not 2.1.312; nothing was installed", true},
-		{"not found", good, "", func(w http.ResponseWriter, r *http.Request, b []byte) { http.NotFound(w, r) }, "cannot download Claude Code 2.1.312 from %s/2.1.312/linux-x64/claude: HTTP 404 Not Found", false},
+		{"digest mismatch", good, sum([]byte("other")), nil, "the downloaded Claude Code " + Version + " does not match its pinned SHA-256; nothing was installed", false},
+		{"size mismatch", good, "", func(w http.ResponseWriter, r *http.Request, b []byte) { w.Write(append(append([]byte{}, b...), '#')) }, fmt.Sprintf("cannot download Claude Code "+Version+" from %%s/"+Version+"/linux-x64/claude: the response announces %d bytes, expected %d; nothing was installed", len(good)+1, len(good)), false},
+		{"another version", script("2.1.314 (Claude Code)", log), "", nil, "the downloaded Claude Code reports 2.1.314 (Claude Code), not " + Version + "; nothing was installed", true},
+		{"not found", good, "", func(w http.ResponseWriter, r *http.Request, b []byte) { http.NotFound(w, r) }, "cannot download Claude Code " + Version + " from %s/" + Version + "/linux-x64/claude: HTTP 404 Not Found", false},
 		{"dropped connection", good, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
 			w.Header().Set("Content-Length", fmt.Sprint(len(b)))
 			w.Write(b[:len(b)/2])
 			w.(http.Flusher).Flush()
 			panic(http.ErrAbortHandler)
-		}, "cannot download Claude Code 2.1.312 from %s/2.1.312/linux-x64/claude: ", false},
+		}, "cannot download Claude Code " + Version + " from %s/" + Version + "/linux-x64/claude: ", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -236,7 +236,7 @@ func TestInstallRefusals(t *testing.T) {
 
 func TestNextInstallRecoversAfterAFailure(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "runs")
-	binary := script("2.1.312 (Claude Code)", log)
+	binary := script(Version+" (Claude Code)", log)
 	var fail atomic.Bool
 	fail.Store(true)
 	s := newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
@@ -262,7 +262,7 @@ func TestNextInstallRecoversAfterAFailure(t *testing.T) {
 
 func TestConcurrentInstallationsSerialize(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "runs")
-	binary := script("2.1.312 (Claude Code)", log)
+	binary := script(Version+" (Claude Code)", log)
 	release := make(chan struct{})
 	s := newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
 		<-release
@@ -296,7 +296,7 @@ func TestConcurrentInstallationsSerialize(t *testing.T) {
 }
 
 func TestWaitingForTheLockEndsWithTheContext(t *testing.T) {
-	s := newSeam(t, script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs")), "", nil)
+	s := newSeam(t, script(Version+" (Claude Code)", filepath.Join(t.TempDir(), "runs")), "", nil)
 	home := t.TempDir()
 	if err := os.MkdirAll(Root(home), 0o700); err != nil {
 		t.Fatal(err)
@@ -315,7 +315,7 @@ func TestWaitingForTheLockEndsWithTheContext(t *testing.T) {
 }
 
 func TestInstalledRuntimeIsNeverReplaced(t *testing.T) {
-	s := newSeam(t, script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs")), "", nil)
+	s := newSeam(t, script(Version+" (Claude Code)", filepath.Join(t.TempDir(), "runs")), "", nil)
 	home := t.TempDir()
 	if err := os.MkdirAll(RuntimeDir(home), 0o700); err != nil {
 		t.Fatal(err)
@@ -334,7 +334,7 @@ func TestInstalledRuntimeIsNeverReplaced(t *testing.T) {
 }
 
 func TestOlderVersionDirectoryIsUntouched(t *testing.T) {
-	newSeam(t, script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs")), "", nil)
+	newSeam(t, script(Version+" (Claude Code)", filepath.Join(t.TempDir(), "runs")), "", nil)
 	home := t.TempDir()
 	old := filepath.Join(Root(home), "2.1.300", "claude")
 	if err := os.MkdirAll(filepath.Dir(old), 0o700); err != nil {
@@ -489,7 +489,7 @@ func TestDownloadIdleProgressAndStall(t *testing.T) {
 		{"first byte expires", 350 * time.Millisecond, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			binary := script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs"))
+			binary := script(Version+" (Claude Code)", filepath.Join(t.TempDir(), "runs"))
 			s := newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
 				w.Header().Set("Content-Length", fmt.Sprint(len(b)))
 				w.WriteHeader(http.StatusOK)
@@ -783,8 +783,8 @@ func TestDownloadHeaderTimeoutRetriesSilentBinary(t *testing.T) {
 	a.setDownloadRetryDelayForTest(time.Millisecond)
 	start := time.Now()
 	err := a.ensureRuntime(context.Background())
-	source := s.URL + "/2.1.312/linux-x64/claude"
-	want := "cannot download Claude Code 2.1.312 from " + source + ": the server did not answer; 3 attempts"
+	source := s.URL + "/" + Version + "/linux-x64/claude"
+	want := "cannot download Claude Code " + Version + " from " + source + ": the server did not answer; 3 attempts"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("%v", err)
 	}
@@ -831,7 +831,7 @@ func TestDownloadHeaderTimeoutSilentManifestIsSingleAttempt(t *testing.T) {
 	a := installer(t.TempDir(), nil)
 	a.setDownloadHeaderTimeoutForTest(100 * time.Millisecond)
 	err := a.ensureRuntime(context.Background())
-	want := "cannot download Claude Code 2.1.312 from " + srv.URL + "/2.1.312/manifest.json: the server did not answer"
+	want := "cannot download Claude Code " + Version + " from " + srv.URL + "/" + Version + "/manifest.json: the server did not answer"
 	if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "attempts") {
 		t.Fatalf("%v", err)
 	}
@@ -858,7 +858,7 @@ func TestDownloadHeaderTimeoutYieldsToCallerDeadline(t *testing.T) {
 }
 
 func TestInstallNamesALocalCreateFailure(t *testing.T) {
-	binary := script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs"))
+	binary := script(Version+" (Claude Code)", filepath.Join(t.TempDir(), "runs"))
 	home := t.TempDir()
 	s := newSeam(t, binary, "", func(w http.ResponseWriter, r *http.Request, b []byte) {
 		// A directory at the partial file's path makes the open fail.
@@ -888,7 +888,7 @@ func TestInstallNamesALocalCreateFailure(t *testing.T) {
 }
 
 func TestInstallFlushesTheFileBeforeAndTheRootAfterPublication(t *testing.T) {
-	binary := script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs"))
+	binary := script(Version+" (Claude Code)", filepath.Join(t.TempDir(), "runs"))
 	newSeam(t, binary, "", nil)
 	home := t.TempDir()
 	var steps []string
@@ -916,7 +916,7 @@ func TestInstallFlushesTheFileBeforeAndTheRootAfterPublication(t *testing.T) {
 }
 
 func TestInstallFileFlushFailureIsUnpublishedAndNotRetried(t *testing.T) {
-	binary := script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs"))
+	binary := script(Version+" (Claude Code)", filepath.Join(t.TempDir(), "runs"))
 	s := newSeam(t, binary, "", nil)
 	home := t.TempDir()
 	a := installer(home, nil)
@@ -934,7 +934,7 @@ func TestInstallFileFlushFailureIsUnpublishedAndNotRetried(t *testing.T) {
 }
 
 func TestInstallRootFlushFailureRemovesThePublishedDirectory(t *testing.T) {
-	binary := script("2.1.312 (Claude Code)", filepath.Join(t.TempDir(), "runs"))
+	binary := script(Version+" (Claude Code)", filepath.Join(t.TempDir(), "runs"))
 	newSeam(t, binary, "", nil)
 	home := t.TempDir()
 	var stderr bytes.Buffer

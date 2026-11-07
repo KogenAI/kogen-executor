@@ -62,7 +62,7 @@ Feature: A failed Claude Code round reports what its result line spent
       """
     Then the failed-usage terminal event lines are exactly:
       """
-      {"claude_code_version":"2.1.312","deadline_remaining_ms":null,"ending":"finish","event":"executor_round_ended","model":"claude-sonnet-5-5","num_turns":3,"permission_denials":0,"role":"build","round":1,"session_id":"@SID@","terminal_reason":"completed","usage":{"cached":2,"cost_usd":0.1,"input":6,"model":"claude-sonnet-5-5","output":4,"reasoning":null,"source":"harness","state":"complete"}}
+      {"claude_code_version":"2.1.318","deadline_remaining_ms":null,"ending":"finish","event":"executor_round_ended","model":"claude-sonnet-5-5","num_turns":3,"permission_denials":0,"role":"build","round":1,"session_id":"@SID@","terminal_reason":"completed","usage":{"cached":2,"cost_usd":0.1,"input":6,"model":"claude-sonnet-5-5","output":4,"reasoning":null,"source":"harness","state":"complete"}}
       """
 
   Scenario: A failed later round's cost is the delta since the previous round
@@ -75,7 +75,7 @@ Feature: A failed Claude Code round reports what its result line spent
       """
     Then the failed-usage terminal events are:
       """json
-      [{"claude_code_version":"2.1.312","deadline_remaining_ms":null,"ending":"finish","event":"executor_round_ended","model":"claude-sonnet-5-5","num_turns":3,"permission_denials":0,"role":"build","round":1,"session_id":"@SID@","terminal_reason":"completed",
+      [{"claude_code_version":"2.1.318","deadline_remaining_ms":null,"ending":"finish","event":"executor_round_ended","model":"claude-sonnet-5-5","num_turns":3,"permission_denials":0,"role":"build","round":1,"session_id":"@SID@","terminal_reason":"completed",
         "usage":{"cached":2,"cost_usd":0.1,"input":6,"model":"claude-sonnet-5-5","output":4,"reasoning":null,"source":"harness","state":"complete"}},
        {"event":"executor_round_failed","role":"build","round":2,"reason":"failed",
         "detail":"Claude Code reported an error result: subtype \"error_during_execution\", terminal reason \"api_error\"","deadline_remaining_ms":null,

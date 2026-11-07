@@ -190,7 +190,7 @@ function decisions(a,want){const r=round(a);assert.deepEqual({hooks:r.hooks,writ
 function roundFails(a,reason,detail){const r=round(a);assert.equal(r.reason,reason,`round error reason: ${r.detail}`);assert.ok(r.detail.includes(detail),`round error detail ${JSON.stringify(r.detail)} names ${detail}`);}
 const startKeys=['auth','claude_code_version','contract','effort','event','executor','max_turns','model','role','run_id','session_id','setting_sources','version'];
 function controls(bad){
- const ev={auth:{},claude_code_version:'2.1.312 (Claude Code)',contract:'kogen.executor/v2',effort:'high',event:'executor_started',executor:'claude-code',max_turns:150,model:'claude-sonnet-5-5',role:'build',run_id:'run-1',session_id:'80e8eb55-116c-4c22-b0b4-7eaefae6d286',setting_sources:'',version:'claude-code 2.1.312 (Claude Code)'};
+ const ev={auth:{},claude_code_version:'2.1.318 (Claude Code)',contract:'kogen.executor/v2',effort:'high',event:'executor_started',executor:'claude-code',max_turns:150,model:'claude-sonnet-5-5',role:'build',run_id:'run-1',session_id:'80e8eb55-116c-4c22-b0b4-7eaefae6d286',setting_sources:'',version:'claude-code 2.1.318 (Claude Code)'};
  const nonce='35f84c06006d38d2e76ab5c04a118cb7',dir='$ABS/r/.run/exec',why='this is the executor artifact directory ('+dir+')';
  const inPolicy={root:'$ABS/r',protected:['protected/contract.txt'],log:dir+'/hook-log.jsonl',artifact_dir:dir};
  const outPolicy={root:'$ABS/r',protected:['protected/contract.txt'],log:'$ABS/outside/exec/hook-log.jsonl'};

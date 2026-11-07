@@ -22,7 +22,7 @@ const CONFIG = '{home}/.kogen/claude-code/config';
 // the sign-in URL, a paste prompt without a line end that waits up to 5 s for out to show it,
 // a line read from standard input, then the token screen of E_SETUP_MODE.
 const FAKE = String.raw`#!/bin/sh
-if [ "$1" = "--version" ]; then echo '2.1.312 (Claude Code)'; exit 0; fi
+if [ "$1" = "--version" ]; then echo '2.1.318 (Claude Code)'; exit 0; fi
 side="$E_SETUP_SIDE"
 printf '%s\n' "$@" >> "$side/args"
 printf '%s' "$CLAUDE_CONFIG_DIR" > "$side/config"
@@ -317,11 +317,11 @@ const checks = {
 
 // controls runs the checks on a known-good observation of each kind and on known-bad mutations.
 function controls(bad) {
-  const installing = 'kogen: installing Claude Code 2.1.312 into {home}/.kogen/claude-code/2.1.312';
+  const installing = 'kogen: installing Claude Code 2.1.318 into {home}/.kogen/claude-code/2.1.318';
   const good = {
     mode: 'missing', command: 'go test', status: 0, output: `=== RUN   ${TEST}\n--- PASS: ${TEST} (0.50s)\nPASS\n`, exported: true, result: true,
     token: TOKEN, error: '', reason: '', downloads: 1,
-    out: `${installing}\nkogen: installed Claude Code 2.1.312 (sha256 0)\nfake runtime notice on stderr\nBrowser did not open? Use the url below to sign in\n\nhttps://claude.example/oauth/authorize?fake=1\n\nPaste code here if prompted > \n`,
+    out: `${installing}\nkogen: installed Claude Code 2.1.318 (sha256 0)\nfake runtime notice on stderr\nBrowser did not open? Use the url below to sign in\n\nhttps://claude.example/oauth/authorize?fake=1\n\nPaste code here if prompted > \n`,
     args: 'setup-token\n', config: CONFIG, stdin: 'PASTED-CODE-123', pgid: '501', parentPgid: '501', gate: 'yes',
   };
   const runFailure = "Kogen's Claude Code `setup-token` failed: exit status 3";

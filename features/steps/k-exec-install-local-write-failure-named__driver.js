@@ -248,20 +248,20 @@ function rows() {
   }
   return out;
 }
-const installing = 'kogen: installing Claude Code 2.1.312 into {home}/.kogen/claude-code/2.1.312';
-const installed = 'kogen: installed Claude Code 2.1.312 (sha256 {sha256})';
-const resetCause = 'cannot download Claude Code 2.1.312 from {source}: read tcp {addr}->{addr}: read: connection reset by peer';
+const installing = 'kogen: installing Claude Code 2.1.318 into {home}/.kogen/claude-code/2.1.318';
+const installed = 'kogen: installed Claude Code 2.1.318 (sha256 {sha256})';
+const resetCause = 'cannot download Claude Code 2.1.318 from {source}: read tcp {addr}->{addr}: read: connection reset by peer';
 const retryLine = n => `kogen: download attempt ${n} failed: executor/unavailable: ${resetCause}; retry after pause`;
 const fileSync = 'file size=4096 published=false';
 const dirSync = 'dir root=true published=true';
 const unchanged = {seam: false, syncs: [], installedSynced: false, writtenBeforeLimit: false, reason: '', detail: '', partialCount: 0};
-const unchangedOK = {...unchanged, requests: 1, success: true, stderr: [installing, installed], runtimeDir: true, runs: '2.1.312 (Claude Code)'};
+const unchangedOK = {...unchanged, requests: 1, success: true, stderr: [installing, installed], runtimeDir: true, runs: '2.1.318 (Claude Code)'};
 // Known-bad results: the unchanged tree's actual results with this capture, and plausible wrong
 // implementations (sync at the wrong moment, a published directory left behind, a retried write).
 const known = {
   create: [{...unchanged, requests: 1, success: false, reason: 'executor/unavailable', detail: 'cannot create {home}/.kogen/claude-code/.partial-*/claude: open {home}/.kogen/claude-code/.partial-*/claude: is a directory', stderr: [installing], runtimeDir: false, runs: ''}],
   write: [
-    {...unchanged, requests: 1, success: false, reason: 'executor/unavailable', detail: 'cannot download Claude Code 2.1.312 from {source}: write {home}/.kogen/claude-code/.partial-*/claude: file too large', stderr: [installing], runtimeDir: false, runs: '', writtenBeforeLimit: true},
+    {...unchanged, requests: 1, success: false, reason: 'executor/unavailable', detail: 'cannot download Claude Code 2.1.318 from {source}: write {home}/.kogen/claude-code/.partial-*/claude: file too large', stderr: [installing], runtimeDir: false, runs: '', writtenBeforeLimit: true},
     {...unchanged, requests: 3, success: false, reason: 'executor/unavailable', detail: 'local write failure: cannot write {home}/.kogen/claude-code/.partial-*/claude: file too large; nothing was installed', stderr: [installing], runtimeDir: false, runs: '', writtenBeforeLimit: true},
     {...unchanged, requests: 1, success: false, reason: 'executor/unavailable', detail: 'local write failure: cannot write {home}/.kogen/claude-code/.partial-*/claude: file too large; nothing was installed', stderr: [installing], runtimeDir: false, runs: '', writtenBeforeLimit: true, partialCount: 1},
   ],

@@ -250,21 +250,21 @@ module.exports = {run, verify, namedBound};
 
 // Observer controls: known-good reports are accepted, every single mutation is rejected.
 if (require.main === module) {
-  const base = 'http://127.0.0.1:4000/2.1.312';
+  const base = 'http://127.0.0.1:4000/2.1.318';
   const binaryURL = `${base}/linux-x64/claude`;
   const manifestURL = `${base}/manifest.json`;
-  const retry = (n, cause) => `kogen: download attempt ${n} failed: executor/unavailable: cannot download Claude Code 2.1.312 from ${binaryURL}: ${cause}; retry after pause\n`;
+  const retry = (n, cause) => `kogen: download attempt ${n} failed: executor/unavailable: cannot download Claude Code 2.1.318 from ${binaryURL}: ${cause}; retry after pause\n`;
   const report = (o) => ({mode: 'x', seam: true, error: '', stderr: '', binaryRequests: 1, manifestRequests: 1, hungMs: [], elapsedMs: 100, partials: 0, lockFree: true, installed: false, binaryURL, manifestURL, ...o});
   const cases = [
-    [report({mode: 'silent', error: `executor/unavailable: cannot download Claude Code 2.1.312 from ${binaryURL}: the server did not answer; 3 attempts`, stderr: retry(1, 'the server did not answer') + retry(2, 'the server did not answer'), binaryRequests: 3, hungMs: [301, 302, 300], elapsedMs: 1100}),
+    [report({mode: 'silent', error: `executor/unavailable: cannot download Claude Code 2.1.318 from ${binaryURL}: the server did not answer; 3 attempts`, stderr: retry(1, 'the server did not answer') + retry(2, 'the server did not answer'), binaryRequests: 3, hungMs: [301, 302, 300], elapsedMs: 1100}),
       {outcome: 'unavailable', binaryRequests: 3, manifestRequests: 1, retryLines: 2, retryNoAnswer: true, names: 'binary', noAnswer: true, attempts3: true, hung: 3, hungWithinBound: true, maxElapsedMs: 3000}],
     [report({mode: 'silent-once', stderr: 'kogen: installing\n' + retry(1, 'the server did not answer') + 'kogen: installed\n', binaryRequests: 2, hungMs: [301], elapsedMs: 400, installed: true}),
       {outcome: 'installed', binaryRequests: 2, manifestRequests: 1, retryLines: 1, retryNoAnswer: true, hung: 1, hungWithinBound: true, maxElapsedMs: 3000}],
     [report({mode: 'slow-body', elapsedMs: 1250, installed: true}),
       {outcome: 'installed', binaryRequests: 1, manifestRequests: 1, retryLines: 0, hung: 0, minElapsedMs: 1000, maxElapsedMs: 5000}],
-    [report({mode: 'manifest-silent', error: `executor/unavailable: cannot download Claude Code 2.1.312 from ${manifestURL}: the server did not answer`, binaryRequests: 0, hungMs: [300]}),
+    [report({mode: 'manifest-silent', error: `executor/unavailable: cannot download Claude Code 2.1.318 from ${manifestURL}: the server did not answer`, binaryRequests: 0, hungMs: [300]}),
       {outcome: 'unavailable', binaryRequests: 0, manifestRequests: 1, retryLines: 0, names: 'manifest', noAnswer: true, attempts3: false, hung: 1, hungWithinBound: true, maxElapsedMs: 3000}],
-    [report({mode: '503', error: `executor/unavailable: cannot download Claude Code 2.1.312 from ${binaryURL}: HTTP 503 Service Unavailable; 3 attempts`, stderr: retry(1, 'HTTP 503 Service Unavailable') + retry(2, 'HTTP 503 Service Unavailable'), binaryRequests: 3}),
+    [report({mode: '503', error: `executor/unavailable: cannot download Claude Code 2.1.318 from ${binaryURL}: HTTP 503 Service Unavailable; 3 attempts`, stderr: retry(1, 'HTTP 503 Service Unavailable') + retry(2, 'HTTP 503 Service Unavailable'), binaryRequests: 3}),
       {outcome: 'unavailable', binaryRequests: 3, manifestRequests: 1, retryLines: 2, retryNoAnswer: false, names: 'binary', noAnswer: false, http: 'HTTP 503', attempts3: true, hung: 0, maxElapsedMs: 3000}],
   ];
   const mutations = (r) => [

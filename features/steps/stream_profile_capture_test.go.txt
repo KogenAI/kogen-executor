@@ -51,7 +51,7 @@ func TestStreamProfileCapture(t *testing.T) {
 					t.Fatalf("%s item %d: unknown string %q", pr.Name, i, x)
 				}
 				v = map[string]any{"type": "system", "subtype": "init", "cwd": checkout, "session_id": "@SID@", "mcp_servers": []any{},
-					"permissionMode": "acceptEdits", "apiKeySource": "none", "claude_code_version": "2.1.312", "model": "claude-sonnet-5-5"}
+					"permissionMode": "acceptEdits", "apiKeySource": "none", "claude_code_version": claudecode.Version, "model": "claude-sonnet-5-5"}
 			}
 			b, err := json.Marshal(v)
 			if err != nil {
@@ -65,7 +65,7 @@ func TestStreamProfileCapture(t *testing.T) {
 		}
 		script := `#!/bin/sh
 if [ "$1" = "--version" ]; then
-  echo "2.1.312 (Claude Code)"
+  echo "` + claudecode.Version + ` (Claude Code)"
   exit 0
 fi
 if [ "$1" = "auth" ] && [ "$2" = "status" ]; then

@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const cp = require('node:child_process');
 function observe(actual, expected) { assert.deepStrictEqual(actual, expected); }
 if (require.main === module) {
-  const expected = {initial:'claude-code 2.1.312 (Claude Code)',observed:'claude-code 2.1.312 (Claude Code)',started:true,reason:'none',replacementDiagnostic:false,auth:1,task:0,events:1};
+  const expected = {initial:'claude-code 2.1.318 (Claude Code)',observed:'claude-code 2.1.318 (Claude Code)',started:true,reason:'none',replacementDiagnostic:false,auth:1,task:0,events:1};
   const actual = JSON.parse(require('node:fs').readFileSync(0,'utf8'));
   if (process.argv[2] === 'bad') actual.auth = 0;
   try { observe(actual, expected); console.log('accepted'); }

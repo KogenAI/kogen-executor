@@ -27,7 +27,7 @@ func TestStartReobservesReplacementWithoutDescribe(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := New(Options{Home: home, HookCommand: []string{"unused"}})
-			if got := a.Describe().Version; got != "claude-code 2.1.312 (Claude Code)" {
+			if got := a.Describe().Version; got != "claude-code "+Version+" (Claude Code)" {
 				t.Fatal(got)
 			}
 			target := path
@@ -68,11 +68,11 @@ func TestDescribeAfterExecutableBecomesUnusable(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho '2.1.312 (Claude Code)'\n"), 0755); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho '"+Version+" (Claude Code)'\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	a := New(Options{Home: home})
-	if got := a.Describe().Version; got != "claude-code 2.1.312 (Claude Code)" {
+	if got := a.Describe().Version; got != "claude-code "+Version+" (Claude Code)" {
 		t.Fatal(got)
 	}
 	if err := os.Chmod(path, 0600); err != nil {

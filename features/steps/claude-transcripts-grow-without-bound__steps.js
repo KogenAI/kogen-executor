@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const label = 'claude-transcripts-grow-without-bound';
 const prefix = label + ': ';
 const hour = 3600;
-const fakeClaude = '#!/bin/sh\ncase "$1" in\n--version) echo "2.1.312 (Claude Code)";;\nauth) echo \'{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}\';;\n*) exit 1;;\nesac\n';
+const fakeClaude = '#!/bin/sh\ncase "$1" in\n--version) echo "2.1.318 (Claude Code)";;\nauth) echo \'{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}\';;\n*) exit 1;;\nesac\n';
 
 // The driver runs the public claudecode.Start once against a fake home and prints its error,
 // its duration and every event as JSON. The retention option is set by name, so that the
@@ -169,7 +169,7 @@ function start(world, extra) {
   const t = fixture(world);
   const bin = buildDriver();
   const home = path.join(t.root, 'home');
-  const claude = path.join(home, '.kogen', 'claude-code', '2.1.312', 'claude');
+  const claude = path.join(home, '.kogen', 'claude-code', '2.1.318', 'claude');
   fs.mkdirSync(path.dirname(claude), {recursive: true});
   fs.writeFileSync(claude, fakeClaude, {mode: 0o755});
   const checkout = path.join(t.root, 'checkout');

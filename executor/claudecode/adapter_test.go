@@ -106,7 +106,7 @@ func TestDescribe(t *testing.T) {
 	if d.Name != executor.ClaudeCode || d.Contract != executor.Contract || !reflect.DeepEqual(d.Capabilities, want) {
 		t.Fatalf("descriptor %+v", d)
 	}
-	if d.Version != "claude-code 2.1.312 (Claude Code)" {
+	if d.Version != "claude-code "+Version+" (Claude Code)" {
 		t.Fatalf("version %q", d.Version)
 	}
 }
@@ -127,7 +127,7 @@ func TestUnavailableAndRefusedMessagesNameTheFix(t *testing.T) {
 		o := h.f.options()
 		_, err := h.start(o)
 		path := RuntimePath(o.Home)
-		want := "Kogen's Claude Code at " + path + " reports 2.1.314 (Claude Code), not the pinned 2.1.312; remove " + RuntimeDir(o.Home) + " to reinstall it"
+		want := "Kogen's Claude Code at " + path + " reports 2.1.314 (Claude Code), not the pinned " + Version + "; remove " + RuntimeDir(o.Home) + " to reinstall it"
 		if got := wantError(t, err, "executor/unavailable").Detail; got != want {
 			t.Fatalf("detail %q, want %q", got, want)
 		}
@@ -158,14 +158,14 @@ func TestVersionGate(t *testing.T) {
 		version string
 		ok      bool
 	}{
-		{"2.1.312 (Claude Code)", true},
-		{"2.1.312", true},
+		{Version + " (Claude Code)", true},
+		{Version, true},
 		{"2.1.314 (Claude Code)", false},
 		{"2.1.295 (Claude Code)", false},
-		{"2.1.3120 (Claude Code)", false},
+		{Version + "0 (Claude Code)", false},
 		{"2.2.0 (Claude Code)", false},
 		{"3.0.0", false},
-		{"v2.1.312", false},
+		{"v" + Version, false},
 		{"not a version", false},
 		{" ", false},
 	}
@@ -227,7 +227,7 @@ func TestStartedEventKeepsOnlySafeAuthFields(t *testing.T) {
 	if auth["auth_method"] != "claude.ai" || auth["api_provider"] != "firstParty" || auth["logged_in"] != true || auth["subscription_type"] != "max" {
 		t.Fatalf("auth %v", auth)
 	}
-	if started[0]["claude_code_version"] != "2.1.312 (Claude Code)" || started[0]["session_id"] != s.Handle().SessionID {
+	if started[0]["claude_code_version"] != Version+" (Claude Code)" || started[0]["session_id"] != s.Handle().SessionID {
 		t.Fatalf("event %v", started[0])
 	}
 }
@@ -248,7 +248,7 @@ func TestStartPreparesTaskDirectory(t *testing.T) {
 		}
 	}
 	hd := s.Handle()
-	if !uuidRe.MatchString(hd.SessionID) || hd.Executor != executor.ClaudeCode || hd.Resume != executor.ResumeNone || hd.Version != "claude-code 2.1.312 (Claude Code)" {
+	if !uuidRe.MatchString(hd.SessionID) || hd.Executor != executor.ClaudeCode || hd.Resume != executor.ResumeNone || hd.Version != "claude-code "+Version+" (Claude Code)" {
 		t.Fatalf("handle %+v", hd)
 	}
 	var pol policy
@@ -831,7 +831,7 @@ func TestRoundResultsAndEvents(t *testing.T) {
 	}
 	e := ended[0]
 	if e["ending"] != "finish" || e["num_turns"] != 3 || e["permission_denials"] != 1 || e["session_id"] != s.Handle().SessionID ||
-		e["model"] != "claude-sonnet-5-5" || e["claude_code_version"] != "2.1.312" {
+		e["model"] != "claude-sonnet-5-5" || e["claude_code_version"] != Version {
 		t.Fatalf("round_ended %v", e)
 	}
 	if u := e["usage"].(map[string]any); u["state"] != "complete" || u["source"] != "harness" || u["input"] != 10 {

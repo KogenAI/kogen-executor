@@ -25,7 +25,7 @@ import (
 
 // Version is the one Claude Code version Kogen runs. Kogen's binary carries it as the only
 // version source: a newer Kogen release pins a newly tested version, nothing selects another.
-const Version = "2.1.312"
+const Version = "2.1.318"
 
 // SeamEnv is the test-only download origin (http://127.0.0.1:<port> or http://localhost:<port>).
 const SeamEnv = "KOGEN_CLAUDE_CODE_URL"
@@ -128,9 +128,9 @@ type pin struct {
 func pinFor(goos, goarch string) (pin, bool) {
 	switch goos + "/" + goarch {
 	case "darwin/arm64":
-		return pin{"darwin-arm64", "6b5ec691195e551b02c41df9f7d723f4ea61eaa03c2df90acefe3736f1aeb620", 275988512}, true
+		return pin{"darwin-arm64", "677a2ea7bf576cedd20e191d973914ed8a41796f53a63b1923381ddc4d5b5e7d", 319598464}, true
 	case "linux/amd64":
-		return pin{"linux-x64", "4f4178ce41d83e23341ebfbaecdbcf8ea6bf7baea0690025abe49eeec3a5d01d", 293592432}, true
+		return pin{"linux-x64", "708c77b204db30086ff6f1ed34577bda03e1be74ced80557cbf7b54249ebf0bd", 337814032}, true
 	}
 	return pin{}, false
 }

@@ -18,25 +18,25 @@ const ccConsumers = "kogen cli/claude_runtime_test.go cli/readiness/readiness_te
 func TestRuntimeLayout(t *testing.T) {
 	t.Parallel()
 	const h = "/home/user"
-	eq(t, "claudecode.Version (kogen cli, kogen-build tests)", claudecode.Version, "2.1.312")
+	eq(t, "claudecode.Version (kogen cli, kogen-build tests)", claudecode.Version, "2.1.318")
 	eq(t, "claudecode.SeamEnv ("+ccConsumers+")", claudecode.SeamEnv, "KOGEN_CLAUDE_CODE_URL")
 	eq(t, "claudecode.Root ("+ccConsumers+")", claudecode.Root(h), filepath.Join(h, ".kogen", "claude-code"))
-	eq(t, "claudecode.RuntimeDir ("+ccConsumers+")", claudecode.RuntimeDir(h), filepath.Join(claudecode.Root(h), "2.1.312"))
+	eq(t, "claudecode.RuntimeDir ("+ccConsumers+")", claudecode.RuntimeDir(h), filepath.Join(claudecode.Root(h), claudecode.Version))
 	eq(t, "claudecode.RuntimePath ("+ccConsumers+")", claudecode.RuntimePath(h), filepath.Join(claudecode.RuntimeDir(h), "claude"))
 	eq(t, "claudecode.ConfigDir ("+ccConsumers+")", claudecode.ConfigDir(h), filepath.Join(claudecode.Root(h), "config"))
 }
 
 func TestPinnedAndMessages(t *testing.T) {
 	t.Parallel()
-	if !claudecode.Pinned("2.1.312 (Claude Code)") {
-		t.Error("claudecode.Pinned refuses `2.1.312 (Claude Code)` (kogen cli/claude_runtime_test.go)")
+	if !claudecode.Pinned(claudecode.Version + " (Claude Code)") {
+		t.Error("claudecode.Pinned refuses `2.1.318 (Claude Code)` (kogen cli/claude_runtime_test.go)")
 	}
 	if claudecode.Pinned("2.1.300 (Claude Code)") {
 		t.Error("claudecode.Pinned accepts `2.1.300 (Claude Code)` (kogen cli/claude_runtime_test.go)")
 	}
 	eq(t, "claudecode.NotPinnedMessage text (kogen cli/claude_runtime_test.go)",
 		claudecode.NotPinnedMessage("/x/claude", "2.1.300 (Claude Code)"),
-		"Kogen's Claude Code at /x/claude reports 2.1.300 (Claude Code), not the pinned 2.1.312")
+		"Kogen's Claude Code at /x/claude reports 2.1.300 (Claude Code), not the pinned "+claudecode.Version)
 	eq(t, "claudecode.UnsupportedMessage text (kogen cli/readiness/readiness_test.go cli/native.go)",
 		claudecode.UnsupportedMessage("windows", "amd64"),
 		"Kogen's Claude Code runtime supports macOS on Apple Silicon and Linux x86-64 only, not windows/amd64")
@@ -50,7 +50,7 @@ func TestProbeRunsInstalledRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claudecode.Probe --version on the installed fake: %v (kogen cli/claude_runtime_test.go)", err)
 	}
-	eq(t, "claudecode.Probe answer (kogen cli/claude_runtime_test.go)", strings.TrimSpace(string(out)), "2.1.312 (Claude Code)")
+	eq(t, "claudecode.Probe answer (kogen cli/claude_runtime_test.go)", strings.TrimSpace(string(out)), claudecode.Version+" (Claude Code)")
 	_, err = claudecode.Probe(context.Background(), t.TempDir(), "--version")
 	wantError(t, "claudecode.Probe installs nothing: a missing runtime is unavailable (kogen cli/claude_runtime_test.go)", err, "executor", executor.ReasonUnavailable)
 }
@@ -64,7 +64,7 @@ func TestDescribe(t *testing.T) {
 	const src = "(kogen features/steps/k16_cc_builder_blocker_driver.go)"
 	eq(t, "Describe Name "+src, d.Name, "claude-code")
 	eq(t, "Describe Contract "+src, d.Contract, "kogen.executor/v2")
-	eq(t, "Describe Version "+src, d.Version, "claude-code 2.1.312 (Claude Code)")
+	eq(t, "Describe Version "+src, d.Version, "claude-code "+claudecode.Version+" (Claude Code)")
 	deepEq(t, "Describe aggregate Capabilities "+src, d.Capabilities, executor.Capabilities{
 		Roles: []string{"build"}, Resume: "none", Continuation: true, Usage: "harness",
 		Prevention: []string{"pretool_hook_write_edit"}, Blocker: true, MaxRounds: 6,

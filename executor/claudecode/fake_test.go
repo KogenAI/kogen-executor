@@ -37,7 +37,7 @@ type fakeConfig struct {
 	Script      conformance.Script `json:"script"`
 	State       string             `json:"state"`
 	RoundEvents [][]map[string]any `json:"round_events"`
-	// Version is the `claude --version` output (default "2.1.312 (Claude Code)").
+	// Version is the `claude --version` output (default "2.1.318 (Claude Code)").
 	Version string `json:"version"`
 	// Auth is the raw `auth status --json` output (default: signed in with claude.ai).
 	Auth string `json:"auth"`
@@ -123,7 +123,7 @@ func fakeClaude(cfgPath string, args []string) int {
 	if len(args) == 1 && args[0] == "--version" {
 		v := cfg.Version
 		if v == "" {
-			v = "2.1.312 (Claude Code)"
+			v = Version + " (Claude Code)"
 		}
 		fmt.Println(v)
 		return 0
@@ -193,7 +193,7 @@ func fakeClaude(cfgPath string, args []string) int {
 	init := map[string]any{
 		"type": "system", "subtype": "init", "cwd": cwd, "session_id": sessionID, "mcp_servers": []any{},
 		"model": "claude-sonnet-5-5", "permissionMode": "acceptEdits", "apiKeySource": "none",
-		"claude_code_version": "2.1.312", "uuid": "00000000-0000-4000-8000-000000000001",
+		"claude_code_version": Version, "uuid": "00000000-0000-4000-8000-000000000001",
 	}
 	if rs.APIKeyAuth {
 		init["apiKeySource"] = "ANTHROPIC_API_KEY"
