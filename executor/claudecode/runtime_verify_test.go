@@ -64,6 +64,8 @@ func TestRuntimeSizeRule(t *testing.T) {
 		{"pinned size", want.size, false, true},
 		{"one byte short", want.size - 1, false, false},
 		{"one byte over", want.size + 1, false, false},
+		{"507 byte stub", 507, false, false},
+		{"229 byte stub", 229, false, false},
 		{"unknown size under the test origin", 1000, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
