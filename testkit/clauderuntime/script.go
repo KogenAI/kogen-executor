@@ -8,7 +8,8 @@ import (
 
 // script is the POSIX sh fake `claude`. It answers --version and `auth status --json`; any
 // other call is round n (n counts calls in <State>/calls): it saves its stdin as
-// <State>/prompt-<n>.bin, prints a system/init line and then <State>/round-<n>.jsonl with
+// <State>/prompt-<n>.bin and its arguments, one per line, as <State>/args-<n>.txt, and, when
+// file descriptor 3 is open, the bytes read from it as <State>/token-<n>.bin; it prints a system/init line and then <State>/round-<n>.jsonl with
 // SessionID replaced by the session id, and exits.
 func script(o Options) string {
 	return `#!/bin/sh
@@ -27,7 +28,9 @@ n=0
 if [ -f "$STATE/calls" ]; then n=$(cat "$STATE/calls"); fi
 n=$((n+1))
 echo "$n" > "$STATE/calls"
+printf '%s\n' "$@" > "$STATE/args-$n.txt"
 cat > "$STATE/prompt-$n.bin"
+if ( : <&3 ) 2>/dev/null; then cat <&3 > "$STATE/token-$n.bin"; fi
 sid=
 prev=
 for a in "$@"; do

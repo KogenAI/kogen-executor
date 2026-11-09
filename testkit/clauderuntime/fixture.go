@@ -90,6 +90,27 @@ func (f *Fixture) Prompt(t testing.TB, n int) string {
 	return string(b)
 }
 
+// Args are the arguments (without the binary) the fake was called with in round n. An argument
+// that contains a newline is not supported.
+func (f *Fixture) Args(t testing.TB, n int) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(f.State, fmt.Sprintf("args-%d.txt", n)))
+	if err != nil {
+		t.Fatalf("the fake claude recorded no arguments for round %d: %v", n, err)
+	}
+	return strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+}
+
+// Token is the exact bytes the fake read from file descriptor 3 in round n.
+func (f *Fixture) Token(t testing.TB, n int) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(f.State, fmt.Sprintf("token-%d.bin", n)))
+	if err != nil {
+		t.Fatalf("the fake claude read no token on fd 3 for round %d: %v", n, err)
+	}
+	return string(b)
+}
+
 // Stream lines of a synthetic round.
 
 // ResultLine is a success result of session SessionID, with extra merged over it.

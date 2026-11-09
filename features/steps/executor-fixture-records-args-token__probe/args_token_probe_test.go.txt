@@ -1,0 +1,294 @@
+package clauderuntime_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-executor/executor/claudecode"
+	"github.com/KogenAI/kogen-executor/executor/conformance"
+	"github.com/KogenAI/kogen-executor/testkit/clauderuntime"
+)
+
+// argsProbeInstall puts the fake runtime under directories the probe owns.
+func argsProbeInstall(t *testing.T, rounds [][]string, o clauderuntime.Options) *clauderuntime.Fixture {
+	t.Helper()
+	root := t.TempDir()
+	o.Home, o.State, o.Rounds = filepath.Join(root, "home"), filepath.Join(root, "state"), rounds
+	return clauderuntime.Install(t, o)
+}
+
+// argsProbeRun runs the installed fake as one round: the prompt on stdin and, when token is not
+// nil, the token on a pipe passed as file descriptor 3 (the way the adapter hands a stored
+// token over). It returns what the fake printed.
+func argsProbeRun(t *testing.T, fx *clauderuntime.Fixture, token *string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(claudecode.RuntimePath(fx.Home), args...)
+	cmd.Stdin = strings.NewReader("probe prompt")
+	if token != nil {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		if _, err := w.WriteString(*token); err != nil {
+			t.Fatal(err)
+		}
+		w.Close()
+		cmd.ExtraFiles = []*os.File{r}
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("the fake round with args %q failed: %v", args, err)
+	}
+	return string(out)
+}
+
+// argsProbeRecorder stands in for the test: it records whether the code under observation ended
+// the test through Fatal, Fatalf, Error, Errorf, Fail or FailNow, and the message.
+type argsProbeRecorder struct {
+	testing.TB
+	failed bool
+	msg    string
+}
+
+func (r *argsProbeRecorder) Helper() {}
+func (r *argsProbeRecorder) fail(msg string) {
+	r.failed, r.msg = true, r.msg+msg
+}
+func (r *argsProbeRecorder) Fatal(a ...any)            { r.fail(fmt.Sprint(a...)); panic("stop") }
+func (r *argsProbeRecorder) Fatalf(f string, a ...any) { r.fail(fmt.Sprintf(f, a...)); panic("stop") }
+func (r *argsProbeRecorder) Error(a ...any)            { r.fail(fmt.Sprint(a...)) }
+func (r *argsProbeRecorder) Errorf(f string, a ...any) { r.fail(fmt.Sprintf(f, a...)) }
+func (r *argsProbeRecorder) Fail()                     { r.failed = true }
+func (r *argsProbeRecorder) FailNow()                  { r.failed = true; panic("stop") }
+func (r *argsProbeRecorder) Failed() bool              { return r.failed }
+
+// argsProbeFailure runs f against a recorder and reports the failure message and whether f ended
+// the test.
+func argsProbeFailure(f func(testing.TB)) (string, bool) {
+	rec := &argsProbeRecorder{}
+	func() {
+		defer func() { _ = recover() }()
+		f(rec)
+	}()
+	return rec.msg, rec.failed
+}
+
+// probeArgs and probeToken call the fixture's Args and Token accessors by name, so that this
+// probe compiles and runs on a tree that does not have them yet and then fails with a message
+// instead of breaking the build of the package.
+func probeArgs(t testing.TB, fx *clauderuntime.Fixture, n int) []string {
+	t.Helper()
+	m := reflect.ValueOf(fx).MethodByName("Args")
+	if !m.IsValid() || m.Type() != reflect.TypeOf(func(testing.TB, int) []string { return nil }) {
+		t.Fatalf("clauderuntime.Fixture has no method Args(testing.TB, int) []string")
+	}
+	return m.Call([]reflect.Value{reflect.ValueOf(&t).Elem(), reflect.ValueOf(n)})[0].Interface().([]string)
+}
+
+func probeToken(t testing.TB, fx *clauderuntime.Fixture, n int) string {
+	t.Helper()
+	m := reflect.ValueOf(fx).MethodByName("Token")
+	if !m.IsValid() || m.Type() != reflect.TypeOf(func(testing.TB, int) string { return "" }) {
+		t.Fatalf("clauderuntime.Fixture has no method Token(testing.TB, int) string")
+	}
+	return m.Call([]reflect.Value{reflect.ValueOf(&t).Elem(), reflect.ValueOf(n)})[0].String()
+}
+
+func TestArgsTokenProbe(t *testing.T) {
+	if _, ok := claudecode.Supported(); !ok {
+		t.Skip("unsupported platform")
+	}
+	schema := `{"type": "object", "properties": {"a b": {"type": "string"}}}`
+	argv := []string{"-p", "--session-id", "sid-probe", "--model", "claude-sonnet-5-5", "--effort", "high", "--json-schema", schema, "--append-system-prompt", "two words"}
+
+	t.Run("args_file_lines", func(t *testing.T) {
+		fx := argsProbeInstall(t, [][]string{{clauderuntime.ResultLine(nil)}}, clauderuntime.Options{})
+		tok := "sk-ant-oat01-SYNTHETIC-PROBE"
+		argsProbeRun(t, fx, &tok, argv...)
+		b, err := os.ReadFile(filepath.Join(fx.State, "args-1.txt"))
+		if err != nil {
+			t.Fatalf("the fake wrote no <State>/args-1.txt: %v", err)
+		}
+		if want := strings.Join(argv, "\n") + "\n"; string(b) != want {
+			t.Fatalf("args-1.txt is %q, want one argument per line %q", b, want)
+		}
+	})
+
+	t.Run("token_file_bytes", func(t *testing.T) {
+		fx := argsProbeInstall(t, [][]string{{clauderuntime.ResultLine(nil)}, {clauderuntime.ResultLine(nil)}}, clauderuntime.Options{})
+		toks := []string{"sk-ant-oat01-SYNTHETIC-NO-NEWLINE", "sk-ant-oat01-SYNTHETIC-WITH-NEWLINE\n"}
+		for i := range toks {
+			argsProbeRun(t, fx, &toks[i], "-p", "--session-id", "sid-probe")
+		}
+		for i, want := range toks {
+			b, err := os.ReadFile(filepath.Join(fx.State, fmt.Sprintf("token-%d.bin", i+1)))
+			if err != nil {
+				t.Fatalf("the fake wrote no <State>/token-%d.bin for a round with fd 3 open: %v", i+1, err)
+			}
+			if string(b) != want {
+				t.Fatalf("token-%d.bin is %q, want exactly the bytes read from fd 3 %q", i+1, b, want)
+			}
+		}
+	})
+
+	t.Run("accessors_with_fd3", func(t *testing.T) {
+		fx := argsProbeInstall(t, [][]string{{clauderuntime.ResultLine(nil)}, {clauderuntime.ResultLine(nil)}}, clauderuntime.Options{})
+		t1, t2 := "sk-ant-oat01-SYNTHETIC-A", "sk-ant-oat01-SYNTHETIC-B"
+		argsProbeRun(t, fx, &t1, argv...)
+		argsProbeRun(t, fx, &t2, "-p", "--resume", "sid-probe")
+		if got := probeArgs(t, fx, 1); !reflect.DeepEqual(got, argv) {
+			t.Fatalf("Args(t, 1) = %q, want %q", got, argv)
+		}
+		if got := probeArgs(t, fx, 2); !reflect.DeepEqual(got, []string{"-p", "--resume", "sid-probe"}) {
+			t.Fatalf("Args(t, 2) = %q", got)
+		}
+		if got := probeToken(t, fx, 1); got != t1 {
+			t.Fatalf("Token(t, 1) = %q, want %q", got, t1)
+		}
+		if got := probeToken(t, fx, 2); got != t2 {
+			t.Fatalf("Token(t, 2) = %q, want %q", got, t2)
+		}
+	})
+
+	t.Run("round_without_fd3", func(t *testing.T) {
+		fx := argsProbeInstall(t, [][]string{{clauderuntime.ResultLine(map[string]any{"result": "answered without a token"})}}, clauderuntime.Options{})
+		out := argsProbeRun(t, fx, nil, "-p", "--session-id", "sid-probe")
+		if !strings.Contains(out, `"subtype":"init"`) || !strings.Contains(out, `"result":"answered without a token"`) {
+			t.Fatalf("the round without fd 3 printed %q, want the init line and the configured round line", out)
+		}
+		if _, err := os.Stat(filepath.Join(fx.State, "token-1.bin")); !os.IsNotExist(err) {
+			t.Fatalf("a round without fd 3 left token-1.bin (stat error %v), want no token file", err)
+		}
+		if got := probeArgs(t, fx, 1); !reflect.DeepEqual(got, []string{"-p", "--session-id", "sid-probe"}) {
+			t.Fatalf("a round without fd 3 recorded args %q", got)
+		}
+		if got := fx.Prompt(t, 1); got != "probe prompt" {
+			t.Fatalf("a round without fd 3 saved prompt %q", got)
+		}
+	})
+
+	t.Run("accessors_fail_without_record", func(t *testing.T) {
+		fx := argsProbeInstall(t, [][]string{{clauderuntime.ResultLine(nil)}}, clauderuntime.Options{})
+		argsProbeRun(t, fx, nil, "-p", "--session-id", "sid-probe")
+		if msg, failed := argsProbeFailure(func(tb testing.TB) { probeToken(tb, fx, 1) }); !failed || !strings.Contains(msg, "round 1") {
+			t.Fatalf("Token for round 1 (run without fd 3) failed=%v with message %q, want a failure that names \"round 1\"", failed, msg)
+		}
+		if msg, failed := argsProbeFailure(func(tb testing.TB) { probeArgs(tb, fx, 2) }); !failed || !strings.Contains(msg, "round 2") {
+			t.Fatalf("Args for round 2 (never run) failed=%v with message %q, want a failure that names \"round 2\"", failed, msg)
+		}
+		if msg, failed := argsProbeFailure(func(tb testing.TB) { probeToken(tb, fx, 2) }); !failed || !strings.Contains(msg, "round 2") {
+			t.Fatalf("Token for round 2 (never run) failed=%v with message %q, want a failure that names \"round 2\"", failed, msg)
+		}
+	})
+
+	t.Run("adapter_session_args_and_token", func(t *testing.T) {
+		checkout, err := filepath.EvalSymlinks(conformance.NewCheckout(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fx := argsProbeInstall(t, [][]string{
+			{clauderuntime.ResultLine(map[string]any{"result": "first"})},
+			{clauderuntime.ResultLine(map[string]any{"result": "second"})},
+		}, clauderuntime.Options{Checkout: checkout})
+		const token = "sk-ant-oat01-SYNTHETIC-SESSION"
+		const taskSchema = `{"type":"object","properties":{"claim":{"type":"string"}}}`
+		task := executor.Task{
+			Role: executor.RoleBuild, Root: checkout, Protected: []string{conformance.ProtectedPath},
+			Brief: executor.Brief{Stable: "STABLE\n", Dynamic: "dynamic"},
+			Model: "claude-sonnet-5-5", Effort: "high", Home: fx.Home, Dir: filepath.Join(t.TempDir(), "executor"),
+			RunID: "run-1", Schema: json.RawMessage(taskSchema),
+		}
+		s, err := claudecode.New(claudecode.Options{Home: fx.Home, HookCommand: []string{"/bin/true"}, Token: token}).Start(context.Background(), task, func(map[string]any) {})
+		if err != nil {
+			t.Fatalf("Start on the fixture with a stored token: %v", err)
+		}
+		defer s.Close()
+		for n := 1; n <= 2; n++ {
+			if _, err := s.Round(context.Background(), executor.Input{Feedback: "again"}); err != nil {
+				t.Fatalf("round %d on the fixture: %v", n, err)
+			}
+		}
+		pair := func(args []string, flag, value string) bool {
+			for i := 0; i+1 < len(args); i++ {
+				if args[i] == flag && args[i+1] == value {
+					return true
+				}
+			}
+			return false
+		}
+		sid := s.Handle().SessionID
+		for n := 1; n <= 2; n++ {
+			args := probeArgs(t, fx, n)
+			for _, p := range [][2]string{{"--model", "claude-sonnet-5-5"}, {"--effort", "high"}, {"--json-schema", taskSchema}} {
+				if !pair(args, p[0], p[1]) {
+					t.Fatalf("round %d args %q lack %s %s", n, args, p[0], p[1])
+				}
+			}
+			first, second := "--session-id", "--resume"
+			if n == 2 {
+				first, second = second, first
+			}
+			if !pair(args, first, sid) || pair(args, second, sid) {
+				t.Fatalf("round %d args %q: want %s %s and no %s", n, args, first, sid, second)
+			}
+			if got := probeToken(t, fx, n); got != token {
+				t.Fatalf("round %d token on fd 3 %q, want %q", n, got, token)
+			}
+		}
+	})
+
+	t.Run("existing_behavior_unchanged", func(t *testing.T) {
+		checkout, err := filepath.EvalSymlinks(conformance.NewCheckout(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fx := argsProbeInstall(t, [][]string{
+			{clauderuntime.ToolUseLine("toolu_1", "Read", map[string]any{"file_path": "README.md"}), clauderuntime.ToolResultLine("toolu_1"), clauderuntime.ResultLine(map[string]any{"result": "all done"})},
+		}, clauderuntime.Options{Checkout: checkout})
+		out, err := claudecode.Probe(context.Background(), fx.Home, "--version")
+		if err != nil || string(out) != clauderuntime.VersionOutput() {
+			t.Fatalf("--version answered %q, %v; want %q", out, err, clauderuntime.VersionOutput())
+		}
+		out, err = claudecode.Probe(context.Background(), fx.Home, "auth", "status", "--json")
+		if err != nil || strings.TrimSpace(string(out)) != clauderuntime.AuthStatusJSON {
+			t.Fatalf("auth status answered %q, %v", out, err)
+		}
+		size, ok := claudecode.RuntimeSize()
+		if info, err := os.Stat(claudecode.RuntimePath(fx.Home)); ok && (err != nil || info.Size() != size) {
+			t.Fatalf("installed runtime %v, %v; want the pinned size %d", info, err, size)
+		}
+		task := executor.Task{
+			Role: executor.RoleBuild, Root: checkout, Protected: []string{conformance.ProtectedPath},
+			Brief: executor.Brief{Stable: "STABLE\n", Dynamic: "dynamic"},
+			Model: "claude-sonnet-5-5", Home: fx.Home, Dir: filepath.Join(t.TempDir(), "executor"),
+			RunID: "run-1", Schema: json.RawMessage(`{"type":"object"}`),
+		}
+		s, err := claudecode.New(claudecode.Options{Home: fx.Home, HookCommand: []string{"/bin/true"}}).Start(context.Background(), task, func(map[string]any) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		res, err := s.Round(context.Background(), executor.Input{})
+		if err != nil || res.Claim != "all done" {
+			t.Fatalf("round 1 answered %q, %v; want claim \"all done\"", res.Claim, err)
+		}
+		if p := fx.Prompt(t, 1); !strings.HasSuffix(p, "dynamic") {
+			t.Fatalf("round 1 prompt %q", p)
+		}
+		if _, err := os.Stat(filepath.Join(fx.State, "token-1.bin")); !os.IsNotExist(err) {
+			t.Fatalf("a session without a stored token left token-1.bin (%v)", err)
+		}
+		if len(probeArgs(t, fx, 1)) == 0 {
+			t.Fatal("a session round recorded no arguments")
+		}
+	})
+}
