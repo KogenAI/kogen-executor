@@ -1,0 +1,206 @@
+package clauderuntime_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-executor/executor/claudecode"
+	"github.com/KogenAI/kogen-executor/executor/conformance"
+	"github.com/KogenAI/kogen-executor/testkit/clauderuntime"
+	"github.com/KogenAI/kogen-loop/sys"
+)
+
+// probeInstall puts the fake runtime under directories the probe owns.
+func probeInstall(t *testing.T, rounds [][]string, o clauderuntime.Options) (string, *clauderuntime.Fixture) {
+	t.Helper()
+	root := t.TempDir()
+	o.Home, o.State, o.Rounds = filepath.Join(root, "home"), filepath.Join(root, "state"), rounds
+	return root, clauderuntime.Install(t, o)
+}
+
+// probeStart starts a Build session of the production adapter on the fixture's home.
+func probeStart(t *testing.T, fx *clauderuntime.Fixture, checkout string) (executor.Session, string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "executor")
+	task := executor.Task{
+		Role: executor.RoleBuild, Root: checkout, Protected: []string{conformance.ProtectedPath},
+		Brief: executor.Brief{Stable: "STABLE authority\n", Dynamic: "dynamic evidence"},
+		Model: "claude-sonnet-5-5", Home: fx.Home, Dir: dir, RunID: "run-1", Schema: json.RawMessage(`{"type":"object"}`),
+	}
+	ex := claudecode.New(claudecode.Options{Home: fx.Home, HookCommand: []string{"/bin/true"}})
+	s, err := ex.Start(context.Background(), task, func(map[string]any) {})
+	if err != nil {
+		t.Fatalf("Start on the fixture: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s, dir
+}
+
+func TestConsumerProbe(t *testing.T) {
+	if _, ok := claudecode.Supported(); !ok {
+		t.Skip("unsupported platform")
+	}
+	t.Logf("probe claudecode.Version=%s", claudecode.Version)
+
+	t.Run("version_answer", func(t *testing.T) {
+		_, fx := probeInstall(t, nil, clauderuntime.Options{})
+		out, err := claudecode.Probe(context.Background(), fx.Home, "--version")
+		if err != nil {
+			t.Fatalf("claudecode.Probe --version on the installed fixture: %v", err)
+		}
+		if got, want := strings.TrimSpace(string(out)), claudecode.Version+" (Claude Code)"; got != want {
+			t.Fatalf("--version answered %q, want %q", got, want)
+		}
+		info, err := os.Stat(claudecode.RuntimePath(fx.Home))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("probe stub_size=%d", info.Size())
+	})
+
+	t.Run("auth_status", func(t *testing.T) {
+		_, fx := probeInstall(t, nil, clauderuntime.Options{})
+		out, err := claudecode.Probe(context.Background(), fx.Home, "auth", "status", "--json")
+		if err != nil {
+			t.Fatalf("claudecode.Probe auth status --json: %v", err)
+		}
+		var got, want map[string]any
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatalf("auth status answered %q, not JSON: %v", out, err)
+		}
+		want = map[string]any{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty", "subscriptionType": "max"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("auth status answered %v, want %v", got, want)
+		}
+	})
+
+	t.Run("round_prompts", func(t *testing.T) {
+		checkout, err := filepath.EvalSymlinks(conformance.NewCheckout(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, fx := probeInstall(t, [][]string{
+			{clauderuntime.ResultLine(map[string]any{"result": "first answer"})},
+			{clauderuntime.ResultLine(map[string]any{"result": "second answer"})},
+		}, clauderuntime.Options{Checkout: checkout})
+		s, _ := probeStart(t, fx, checkout)
+		for i, c := range []struct {
+			in    executor.Input
+			claim string
+		}{{executor.Input{}, "first answer"}, {executor.Input{Feedback: "again please"}, "second answer"}} {
+			res, err := s.Round(context.Background(), c.in)
+			if err != nil {
+				t.Fatalf("round %d on the fixture: %v", i+1, err)
+			}
+			if res.Claim != c.claim {
+				t.Fatalf("round %d claim %q, want %q", i+1, res.Claim, c.claim)
+			}
+		}
+		if p := fx.Prompt(t, 1); !strings.HasPrefix(p, claudecode.Constraints) || !strings.HasSuffix(p, "STABLE authority\n\n\ndynamic evidence") {
+			t.Fatalf("round 1 prompt on stdin is %q", p)
+		}
+		if p := fx.Prompt(t, 2); !strings.Contains(p, "again please") {
+			t.Fatalf("round 2 prompt on stdin %q lacks the feedback", p)
+		}
+	})
+
+	t.Run("session_id_substitution", func(t *testing.T) {
+		checkout, err := filepath.EvalSymlinks(conformance.NewCheckout(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, fx := probeInstall(t, [][]string{{clauderuntime.ResultLine(nil)}}, clauderuntime.Options{Checkout: checkout})
+		s, dir := probeStart(t, fx, checkout)
+		if _, err := s.Round(context.Background(), executor.Input{}); err != nil {
+			t.Fatal(err)
+		}
+		sid := s.Handle().SessionID
+		var seen string
+		filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() && filepath.Base(p) == "round-1.jsonl" {
+				b, _ := os.ReadFile(p)
+				seen = string(b)
+			}
+			return nil
+		})
+		if seen == "" {
+			t.Fatalf("the adapter kept no round-1.jsonl under %s", dir)
+		}
+		if strings.Contains(seen, clauderuntime.SessionID) || !strings.Contains(seen, `"session_id":"`+sid+`"`) {
+			t.Fatalf("the result line of round 1 does not carry the session id %q:\n%s", sid, seen)
+		}
+	})
+
+	t.Run("api_key_source", func(t *testing.T) {
+		checkout, err := filepath.EvalSymlinks(conformance.NewCheckout(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, fx := probeInstall(t, [][]string{{clauderuntime.ResultLine(nil)}}, clauderuntime.Options{Checkout: checkout, APIKeySource: "ANTHROPIC_API_KEY"})
+		s, _ := probeStart(t, fx, checkout)
+		_, err = s.Round(context.Background(), executor.Input{})
+		if e, ok := sys.AsError(err); !ok || e.Class != "executor" || e.Reason != executor.ReasonAuthRefused {
+			t.Fatalf("a round whose init event reports apiKeySource ANTHROPIC_API_KEY ended with %v, want executor/auth_refused", err)
+		}
+	})
+
+	t.Run("caller_owned_paths", func(t *testing.T) {
+		root := t.TempDir()
+		home, state := filepath.Join(root, "caller-home"), filepath.Join(root, "caller-state")
+		fx := clauderuntime.Install(t, clauderuntime.Options{Home: home, State: state, Rounds: [][]string{{clauderuntime.ResultLine(nil)}}})
+		if fx.Home != home || fx.State != state {
+			t.Fatalf("Fixture paths %q %q, want the caller's %q %q", fx.Home, fx.State, home, state)
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		if !reflect.DeepEqual(names, []string{"caller-home", "caller-state"}) {
+			t.Fatalf("Install left %v in the caller's directory, want only caller-home and caller-state", names)
+		}
+		if _, err := os.Stat(filepath.Join(state, "round-1.jsonl")); err != nil {
+			t.Fatalf("the round file is not under the caller's State: %v", err)
+		}
+		if _, err := os.Stat(claudecode.RuntimePath(home)); err != nil {
+			t.Fatalf("the runtime is not at claudecode.RuntimePath(Home): %v", err)
+		}
+	})
+
+	t.Run("determinism", func(t *testing.T) {
+		var answers, scripts [][]byte
+		for i := 0; i < 2; i++ {
+			_, fx := probeInstall(t, [][]string{{clauderuntime.ResultLine(nil)}}, clauderuntime.Options{Checkout: "/checkout"})
+			v, err := claudecode.Probe(context.Background(), fx.Home, "--version")
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, err := claudecode.Probe(context.Background(), fx.Home, "auth", "status", "--json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			answers = append(answers, append(v, a...))
+			b, err := os.ReadFile(claudecode.RuntimePath(fx.Home))
+			if err != nil {
+				t.Fatal(err)
+			}
+			scripts = append(scripts, bytes.ReplaceAll(bytes.TrimRight(b, "\x00"), []byte(fx.State), nil))
+		}
+		if !bytes.Equal(answers[0], answers[1]) {
+			t.Fatalf("two installations answered differently: %q and %q", answers[0], answers[1])
+		}
+		if !bytes.Equal(scripts[0], scripts[1]) {
+			t.Fatalf("two installations differ in their script bytes apart from the state path")
+		}
+	})
+}

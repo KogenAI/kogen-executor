@@ -7,15 +7,16 @@ import (
 
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-executor/executor/claudecode"
+	"github.com/KogenAI/kogen-executor/testkit/clauderuntime"
 )
 
 // successFor is the success result a role submits: Build's claim text, the structured
 // submission of Shape and Review.
 func successFor(role string) string {
 	if role == executor.RoleBuild {
-		return resultLine(nil)
+		return clauderuntime.ResultLine(nil)
 	}
-	return resultLine(map[string]any{"structured_output": map[string]any{"verdict": "approve"}})
+	return clauderuntime.ResultLine(map[string]any{"structured_output": map[string]any{"verdict": "approve"}})
 }
 
 func TestFirstPromptLayout(t *testing.T) {
@@ -48,7 +49,7 @@ func TestFirstPromptLayout(t *testing.T) {
 
 func TestBuildFinishClaim(t *testing.T) {
 	t.Parallel()
-	r, err := startFake(t, executor.RoleBuild, [][]string{{resultLine(map[string]any{"result": "I changed two files."})}})
+	r, err := startFake(t, executor.RoleBuild, [][]string{{clauderuntime.ResultLine(map[string]any{"result": "I changed two files."})}})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -75,7 +76,7 @@ func TestBuildFinishClaim(t *testing.T) {
 func TestBuildBlocker(t *testing.T) {
 	t.Parallel()
 	blocker := map[string]any{"paths": []string{"protected/contract.txt"}, "reason": "the fixture contradicts the Intent", "evidence": "go test: FAIL"}
-	r, err := startFake(t, executor.RoleBuild, [][]string{{resultLine(map[string]any{"structured_output": map[string]any{"blocker": blocker}})}})
+	r, err := startFake(t, executor.RoleBuild, [][]string{{clauderuntime.ResultLine(map[string]any{"structured_output": map[string]any{"blocker": blocker}})}})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -105,7 +106,7 @@ func TestStructuredSubmission(t *testing.T) {
 	} {
 		t.Run(c.role, func(t *testing.T) {
 			t.Parallel()
-			r, err := startFake(t, c.role, [][]string{{resultLine(map[string]any{"result": "text, not the submission", "structured_output": submission})}})
+			r, err := startFake(t, c.role, [][]string{{clauderuntime.ResultLine(map[string]any{"result": "text, not the submission", "structured_output": submission})}})
 			if err != nil {
 				t.Fatalf("Start: %v", err)
 			}
@@ -132,7 +133,7 @@ func TestStructuredSubmission(t *testing.T) {
 
 func TestUsageMapping(t *testing.T) {
 	t.Parallel()
-	r, err := startFake(t, executor.RoleBuild, [][]string{{resultLine(map[string]any{"usage": map[string]any{
+	r, err := startFake(t, executor.RoleBuild, [][]string{{clauderuntime.ResultLine(map[string]any{"usage": map[string]any{
 		"input_tokens": 10, "cache_read_input_tokens": 700, "cache_creation_input_tokens": 300, "output_tokens": 5,
 	}})}})
 	if err != nil {
@@ -161,8 +162,8 @@ func TestUsageMapping(t *testing.T) {
 func TestUsageLimitClassification(t *testing.T) {
 	t.Parallel()
 	r, err := startFake(t, executor.RoleBuild, [][]string{{
-		assistantErrorLine("rate_limit"),
-		resultLine(map[string]any{"subtype": "success", "is_error": true, "terminal_reason": "api_error"}),
+		clauderuntime.AssistantErrorLine("rate_limit"),
+		clauderuntime.ResultLine(map[string]any{"subtype": "success", "is_error": true, "terminal_reason": "api_error"}),
 	}})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -185,7 +186,7 @@ func TestUsageLimitClassification(t *testing.T) {
 
 func TestAuthRouteRefused(t *testing.T) {
 	t.Parallel()
-	r, err := startFake(t, executor.RoleBuild, [][]string{{resultLine(nil)}}, fakeOptions{APIKeySource: "ANTHROPIC_API_KEY"})
+	r, err := startFake(t, executor.RoleBuild, [][]string{{clauderuntime.ResultLine(nil)}}, fakeOptions{APIKeySource: "ANTHROPIC_API_KEY"})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -201,9 +202,9 @@ func TestAuthRouteRefused(t *testing.T) {
 func TestRunLogEvents(t *testing.T) {
 	t.Parallel()
 	r, err := startFake(t, executor.RoleBuild, [][]string{{
-		toolUseLine("toolu_read", "Read", map[string]any{"file_path": "README.md"}),
-		toolResultLine("toolu_read"),
-		resultLine(nil),
+		clauderuntime.ToolUseLine("toolu_read", "Read", map[string]any{"file_path": "README.md"}),
+		clauderuntime.ToolResultLine("toolu_read"),
+		clauderuntime.ResultLine(nil),
 	}})
 	if err != nil {
 		t.Fatalf("Start: %v", err)

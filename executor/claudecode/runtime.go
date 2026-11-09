@@ -142,6 +142,13 @@ func Supported() (platform string, ok bool) {
 	return p.platform, ok
 }
 
+// RuntimeSize is the pinned executable size of this machine's platform; ok is false when the
+// platform is unsupported.
+func RuntimeSize() (size int64, ok bool) {
+	p, ok := pinFor(runtime.GOOS, runtime.GOARCH)
+	return p.size, ok
+}
+
 // UnsupportedMessage is the refusal on any other platform.
 func UnsupportedMessage(goos, goarch string) string {
 	return "Kogen's Claude Code runtime supports macOS on Apple Silicon and Linux x86-64 only, not " + goos + "/" + goarch
