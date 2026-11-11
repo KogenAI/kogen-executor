@@ -27,6 +27,29 @@ import (
 	"github.com/KogenAI/kogen-executor/executor"
 )
 
+// The fixed policy of every round.
+const (
+	// streamPersistBytes caps redacted stream payload per round. Overflow adds a
+	// kogen_persistence_truncated JSON marker with cap_bytes, unpersisted_lines and
+	// unpersisted_bytes. Terminal events report stream_persist_truncated and
+	// stream_persist_unpersisted_bytes only on overflow.
+	streamPersistBytes int64 = 64 << 20
+	// stderrPersistBytes caps redacted stderr per round. Overflow adds a [kogen: stderr
+	// persistence stopped at cap_bytes=...; unpersisted_bytes=...] marker. Terminal events
+	// report stderr_persist_truncated and stderr_persist_unpersisted_bytes only on overflow or
+	// when a failed or short write left stderr bytes unpersisted; stderr keeps draining after
+	// such a failure.
+	stderrPersistBytes int64 = 8 << 20
+	// maxTurns is Claude Code's per-round turn limit.
+	maxTurns = 150
+	// killGrace is the wait between SIGTERM and SIGKILL of the process group.
+	killGrace = 5 * time.Second
+	// transcriptRetention is how long a Claude Code session transcript under the configuration
+	// folder's projects directory is kept after its last modification. Every Start removes the
+	// older ones, except its own session's.
+	transcriptRetention = 24 * time.Hour
+)
+
 // Options configure the adapter. The zero value is production-ready except HookCommand.
 type Options struct {
 	// Home is the user's home directory: Kogen's Claude Code lives under <Home>/.kogen/claude-code.
@@ -36,60 +59,28 @@ type Options struct {
 	// HookCommand is the Kogen binary and hidden subcommand that run the hooks, e.g.
 	// [os.Executable(), HookSubcommand]. Required for prevention; Start refuses without it.
 	HookCommand []string
-	// StreamPersistBytes caps redacted stream payload per round; <=0 defaults to 64 MiB.
-	// Overflow adds a kogen_persistence_truncated JSON marker with cap_bytes,
-	// unpersisted_lines and unpersisted_bytes. Terminal events report
-	// stream_persist_truncated and stream_persist_unpersisted_bytes only on overflow.
-	StreamPersistBytes int64
-	// StderrPersistBytes caps redacted stderr per round; <=0 defaults to 8 MiB.
-	// Overflow adds a [kogen: stderr persistence stopped at cap_bytes=...;
-	// unpersisted_bytes=...] marker. Terminal events report stderr_persist_truncated
-	// and stderr_persist_unpersisted_bytes only on overflow or when a failed or short
-	// write left stderr bytes unpersisted; stderr keeps draining after such a failure.
-	StderrPersistBytes int64
-	// MaxTurns is Claude Code's per-round turn limit (default 150).
-	MaxTurns int
 	// Env is the base environment of the child (default os.Environ()); the strip list is
 	// applied on top.
 	Env []string
 	// Token is the stored Claude Code subscription token (`claude setup-token`), set as
 	// fd 3 of every child that gets it; empty means none is stored.
 	Token string
-	// KillGrace is the wait between SIGTERM and SIGKILL of the process group (default 5s).
-	KillGrace time.Duration
-	// SettingSources is passed to --setting-sources. The default "" isolates the run from the
-	// user's, project's and local Claude Code settings, hooks and CLAUDE.md.
-	SettingSources string
-	// TranscriptRetention is how long a Claude Code session transcript under the configuration
-	// folder's projects directory is kept after its last modification. Every Start removes the
-	// older ones, except its own session's. nil means 24 hours; a value of 0 or less disables
-	// pruning.
-	TranscriptRetention *time.Duration
 }
 
 // New returns the Claude Code executor.
 func New(opts Options) executor.Executor {
-	if opts.StreamPersistBytes <= 0 {
-		opts.StreamPersistBytes = 64 << 20
-	}
-	if opts.StderrPersistBytes <= 0 {
-		opts.StderrPersistBytes = 8 << 20
-	}
-	if opts.MaxTurns <= 0 {
-		opts.MaxTurns = 150
-	}
 	if opts.Env == nil {
 		opts.Env = os.Environ()
 	}
-	if opts.KillGrace <= 0 {
-		opts.KillGrace = 5 * time.Second
-	}
-	return &adapter{opts: opts, goos: runtime.GOOS, goarch: runtime.GOARCH}
+	return &adapter{opts: opts, goos: runtime.GOOS, goarch: runtime.GOARCH,
+		killGrace: killGrace, streamCap: streamPersistBytes}
 }
 
 type adapter struct {
 	opts               Options
 	goos, goarch       string
+	killGrace          time.Duration
+	streamCap          int64
 	downloadIdle       time.Duration
 	downloadHeader     time.Duration
 	downloadRetryDelay time.Duration
@@ -423,10 +414,7 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 		return nil, executor.Fail(executor.ReasonFailed, "cannot write the hook settings: "+err.Error())
 	}
 
-	var transcripts map[string]any
-	if retention, ok := a.transcriptRetention(); ok {
-		transcripts = pruneTranscripts(ConfigDir(a.opts.Home), time.Now(), retention, sessionID).event()
-	}
+	transcripts := pruneTranscripts(ConfigDir(a.opts.Home), time.Now(), transcriptRetention, sessionID).event()
 
 	s := &session{
 		a: a, task: t, emit: emit, bin: bin, env: env, root: root, dir: dir,
@@ -444,8 +432,8 @@ func (a *adapter) Start(ctx context.Context, t executor.Task, emit executor.Sink
 		"role":                t.Role,
 		"model":               t.Model,
 		"effort":              t.Effort,
-		"setting_sources":     a.opts.SettingSources,
-		"max_turns":           a.opts.MaxTurns,
+		"setting_sources":     "",
+		"max_turns":           maxTurns,
 		"auth": map[string]any{
 			"logged_in": auth.LoggedIn, "auth_method": auth.AuthMethod,
 			"api_provider": auth.APIProvider, "subscription_type": auth.SubscriptionType,

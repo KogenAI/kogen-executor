@@ -105,7 +105,7 @@ func round(callsPath string, extraEnv ...string) ([]map[string]any, error) {
 	env := append(os.Environ(), "TOOL_ARGS_FIXTURE_CALLS="+callsPath)
 	a := claudecode.New(claudecode.Options{
 		Home: home, HookCommand: []string{exe, "hook"},
-		Env: append(env, extraEnv...), KillGrace: 100 * time.Millisecond,
+		Env: append(env, extraEnv...),
 	})
 	var mu sync.Mutex
 	var events []map[string]any

@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-executor/executor/claudecode"
@@ -133,7 +132,7 @@ func round(role, callsPath, token string, extraEnv ...string) ([]map[string]any,
 	env := append(os.Environ(), "K_TOOL_ARGS_CALLS="+callsPath, "K_TOOL_ARGS_ROLE="+role)
 	a := claudecode.New(claudecode.Options{
 		Home: home, HookCommand: []string{exe, "hook"}, Token: token,
-		Env: append(env, extraEnv...), KillGrace: 100 * time.Millisecond,
+		Env: append(env, extraEnv...),
 	})
 	var mu sync.Mutex
 	var events []map[string]any

@@ -28,6 +28,8 @@ type harness struct {
 	root   string
 	task   executor.Task
 	events []map[string]any
+	// tune adjusts the adapter's fixed values that a test cannot wait out.
+	tune func(*adapter)
 }
 
 func oneRound(r conformance.RoundScript) conformance.Script {
@@ -54,7 +56,12 @@ func newHarness(t *testing.T, cfg fakeConfig) *harness {
 }
 
 func (h *harness) start(opts Options) (executor.Session, error) {
-	return New(opts).Start(context.Background(), h.task, func(e map[string]any) { h.events = append(h.events, e) })
+	a := New(opts).(*adapter)
+	a.killGrace = 2 * time.Second
+	if h.tune != nil {
+		h.tune(a)
+	}
+	return a.Start(context.Background(), h.task, func(e map[string]any) { h.events = append(h.events, e) })
 }
 
 func (h *harness) startOK() executor.Session {
@@ -335,13 +342,11 @@ func TestArgvRounds(t *testing.T) {
 	}
 }
 
-func TestArgvOptionalFlagsAndMaxTurns(t *testing.T) {
+func TestArgvOptionalFlagsAndFixedPolicy(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, fakeConfig{Script: oneRound(finishRound)})
 	h.task.Effort = ""
-	o := h.f.options()
-	o.MaxTurns, o.SettingSources = 7, "project,local"
-	s, err := h.start(o)
+	s, err := h.start(h.f.options())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +358,7 @@ func TestArgvOptionalFlagsAndMaxTurns(t *testing.T) {
 	if strings.Contains(args, "--effort") {
 		t.Fatal("--effort passed without an effort")
 	}
-	for _, want := range []string{"--max-turns\x007", "--setting-sources\x00project,local"} {
+	for _, want := range []string{"--max-turns\x00150", "--setting-sources\x00\x00--strict-mcp-config"} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("argv lacks %q", want)
 		}
@@ -1003,9 +1008,8 @@ func TestClaimBounded(t *testing.T) {
 func TestLingeringProcessAfterResultIsStopped(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, fakeConfig{LingerSeconds: 30, Script: oneRound(finishRound)})
-	o := h.f.options()
-	o.KillGrace = 300 * time.Millisecond
-	s, err := h.start(o)
+	h.tune = func(a *adapter) { a.killGrace = 300 * time.Millisecond }
+	s, err := h.start(h.f.options())
 	if err != nil {
 		t.Fatal(err)
 	}

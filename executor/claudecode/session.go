@@ -218,7 +218,7 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 	defer er.Close()
 	defer ew.Close()
 	stderr := ew
-	capped := &stderrPersistence{w: stderrFile, cap: s.a.opts.StderrPersistBytes}
+	capped := &stderrPersistence{w: stderrFile, cap: stderrPersistBytes}
 	var errw *redactWriter
 	var target io.Writer = capped
 	if tok := s.a.opts.Token; tok != "" {
@@ -250,7 +250,7 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 			fmt.Fprintf(stderrFile, "\n[kogen: stderr persistence stopped at cap_bytes=%d; unpersisted_bytes=%d]\n", capped.cap, capped.lost)
 		}
 		if rr.streamLostLines > 0 {
-			fmt.Fprintf(streamFile, "{\"type\":\"kogen_persistence_truncated\",\"cap_bytes\":%d,\"unpersisted_lines\":%d,\"unpersisted_bytes\":%d}\n", s.a.opts.StreamPersistBytes, rr.streamLostLines, rr.streamLostBytes)
+			fmt.Fprintf(streamFile, "{\"type\":\"kogen_persistence_truncated\",\"cap_bytes\":%d,\"unpersisted_lines\":%d,\"unpersisted_bytes\":%d}\n", s.a.streamCap, rr.streamLostLines, rr.streamLostBytes)
 		}
 		if err := raw.Close(); streamFile.err == nil {
 			streamFile.err = err
@@ -274,7 +274,7 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 		}
 	}()
 
-	args := roleRoundArgs(s.a.opts, s.role, s.schema, s.sessionID, n, s.task.Model, s.task.Effort, s.settingsPath, s.a.opts.MaxTurns)
+	args := roleRoundArgs(s.role, s.schema, s.sessionID, n, s.task.Model, s.task.Effort, s.settingsPath)
 	cmd := exec.Command(s.bin, args...)
 	cmd.Dir = s.root
 	cmd.Env = s.env
@@ -378,7 +378,7 @@ loop:
 		case <-stderrFailed:
 			return fail(errArtifactWrite)
 		case <-ctx.Done():
-			terminateGroup(pgid, exited, s.a.opts.KillGrace)
+			terminateGroup(pgid, exited, s.a.killGrace)
 			return executor.RoundResult{}, rr.classifyContext(ctx)
 		case err := <-werrCh:
 			werrCh = nil
@@ -399,7 +399,7 @@ loop:
 			// caught however the pipe chunked it and never reaches events or the claim.
 			line := []byte(s.a.redact(string(m.line)))
 			size := int64(len(line)) + 1
-			if rr.streamLostLines > 0 || size > s.a.opts.StreamPersistBytes-streamKept {
+			if rr.streamLostLines > 0 || size > s.a.streamCap-streamKept {
 				rr.streamLostLines++
 				rr.streamLostBytes += size
 			} else {
@@ -415,13 +415,13 @@ loop:
 			}
 			if rr.result != nil && drain == nil {
 				// The result is the last line: give Claude Code KillGrace to exit on its own.
-				drain = time.After(s.a.opts.KillGrace)
+				drain = time.After(s.a.killGrace)
 			}
 		case <-exitedCh:
 			// Claude Code is gone: stop what it left in its group (which may hold the
 			// pipe open), then drain what was written.
 			exitedCh = nil
-			terminateGroup(pgid, exited, s.a.opts.KillGrace)
+			terminateGroup(pgid, exited, s.a.killGrace)
 			drain = time.After(groupDrain)
 		case <-drain:
 			lingering = exitedCh != nil
@@ -432,19 +432,19 @@ loop:
 	// All output read. Claude Code may linger after its result (background work): bound it.
 	if lingering {
 		killed = true
-		terminateGroup(pgid, exited, s.a.opts.KillGrace)
+		terminateGroup(pgid, exited, s.a.killGrace)
 	}
 	select {
 	case <-exited:
 	case <-ctx.Done():
-		terminateGroup(pgid, exited, s.a.opts.KillGrace)
+		terminateGroup(pgid, exited, s.a.killGrace)
 		return executor.RoundResult{}, rr.classifyContext(ctx)
-	case <-time.After(s.a.opts.KillGrace):
+	case <-time.After(s.a.killGrace):
 		killed = true
-		terminateGroup(pgid, exited, s.a.opts.KillGrace)
+		terminateGroup(pgid, exited, s.a.killGrace)
 	}
 	if groupAlive(pgid) {
-		terminateGroup(pgid, exited, s.a.opts.KillGrace)
+		terminateGroup(pgid, exited, s.a.killGrace)
 	}
 	select {
 	case <-exited:

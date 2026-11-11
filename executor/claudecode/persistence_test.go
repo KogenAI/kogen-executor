@@ -19,9 +19,8 @@ func TestStreamPersistenceBoundariesAndReset(t *testing.T) {
 	h := newHarness(t, fakeConfig{Script: conformance.Script{Rounds: []conformance.RoundScript{finishRound, finishRound}}})
 	run := func(cap int64, rounds int) ([]string, []map[string]any) {
 		h.events = nil
-		o := h.f.options()
-		o.StreamPersistBytes = cap
-		s, err := h.start(o)
+		h.tune = func(a *adapter) { a.streamCap = cap }
+		s, err := h.start(h.f.options())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,9 +66,8 @@ func TestStreamPersistenceBoundariesAndReset(t *testing.T) {
 
 func TestPersistenceDoesNotBypassHook(t *testing.T) {
 	h := newHarness(t, fakeConfig{SkipHook: true, Script: oneRound(conformance.RoundScript{Actions: []conformance.Action{{Write: &conformance.WriteAction{Path: "a.txt", Content: "a"}}}, End: "finish"})})
-	o := h.f.options()
-	o.StreamPersistBytes = 1
-	s, err := h.start(o)
+	h.tune = func(a *adapter) { a.streamCap = 1 }
+	s, err := h.start(h.f.options())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,12 +82,10 @@ func TestPersistenceDoesNotBypassHook(t *testing.T) {
 	}
 }
 
-func TestPersistenceDefaults(t *testing.T) {
-	for _, n := range []int64{0, -1} {
-		a := New(Options{StreamPersistBytes: n, StderrPersistBytes: n}).(*adapter)
-		if a.opts.StreamPersistBytes != 64<<20 || a.opts.StderrPersistBytes != 8<<20 {
-			t.Fatal(a.opts)
-		}
+func TestFixedPolicyDefaults(t *testing.T) {
+	a := New(Options{}).(*adapter)
+	if a.streamCap != 64<<20 || stderrPersistBytes != 8<<20 || a.killGrace != 5*time.Second || maxTurns != 150 || transcriptRetention != 24*time.Hour {
+		t.Fatal(a.streamCap, a.killGrace)
 	}
 }
 
@@ -177,7 +173,7 @@ func TestFinalPersistenceFailures(t *testing.T) {
 			o := h.f.options()
 			o.Token = "a-long-synthetic-token-for-the-buffer"
 			if tc.marker {
-				o.StreamPersistBytes = 1
+				h.tune = func(a *adapter) { a.streamCap = 1 }
 			}
 			s, err := h.start(o)
 			if err != nil {

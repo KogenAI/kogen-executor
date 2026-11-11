@@ -39,9 +39,8 @@ include usage. Cost remains the harness estimate, not a bill.
 ### Claude Code round artifact persistence
 
 Each round independently limits redacted payload persisted to `round-N.jsonl` and
-`round-N.stderr`. `Options.StreamPersistBytes` and `Options.StderrPersistBytes`
-select byte caps; nonpositive values use 64 MiB (67108864) and 8 MiB (8388608)
-respectively. These are observation limits, not execution limits. Stream lines
+`round-N.stderr`. The byte caps are fixed at 64 MiB (67108864) for the stream and
+8 MiB (8388608) for stderr. These are observation limits, not execution limits. Stream lines
 include their appended newline and are kept whole until the first overflow;
 subsequent lines are counted but not saved. Stderr keeps its redacted byte prefix
 and continues draining. An overflow appends one marker outside the payload cap:

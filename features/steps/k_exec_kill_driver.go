@@ -76,7 +76,7 @@ func parent(root, role, mode string) {
 	must(os.Symlink(exe, claudecode.RuntimePath(home)))
 	a := claudecode.New(claudecode.Options{
 		Home: home, HookCommand: []string{exe},
-		Env: append(os.Environ(), "K_EXEC_ROOT="+root), KillGrace: 100 * time.Millisecond,
+		Env: append(os.Environ(), "K_EXEC_ROOT="+root),
 	})
 	s, err := a.Start(context.Background(), executor.Task{
 		Role: role, Root: root, Home: home, Dir: filepath.Join(root, "artifacts"),

@@ -208,20 +208,17 @@ func TestStartPrunesTranscripts(t *testing.T) {
 		putTranscript(t, older, 4000, 90*time.Hour)
 		return h, recent, old, older
 	}
-	start := func(t *testing.T, h *harness, retention *time.Duration) {
-		opts := h.f.options()
-		opts.TranscriptRetention = retention
-		s, err := h.start(opts)
+	start := func(t *testing.T, h *harness) {
+		s, err := h.start(h.f.options())
 		if err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		t.Cleanup(func() { s.Close() })
 	}
-	hours := func(n int) *time.Duration { d := time.Duration(n) * time.Hour; return &d }
 
 	t.Run("default is 24 hours", func(t *testing.T) {
 		h, recent, old, older := setup(t)
-		start(t, h, nil)
+		start(t, h)
 		got, ok := startEventTranscripts(t, h)
 		want := map[string]any{"removed": int64(2), "removed_bytes": int64(4300), "kept": int64(1), "remove_failed": int64(0), "bound_reached": false}
 		if !ok || !reflect.DeepEqual(got, want) {
@@ -231,29 +228,9 @@ func TestStartPrunesTranscripts(t *testing.T) {
 			t.Fatalf("recent=%v old=%v older=%v", exists(recent), exists(old), exists(older))
 		}
 	})
-	t.Run("option sets the period", func(t *testing.T) {
-		h, recent, old, older := setup(t)
-		start(t, h, hours(48))
-		got, _ := startEventTranscripts(t, h)
-		if got["removed"] != int64(1) || got["kept"] != int64(2) || !exists(recent) || !exists(old) || exists(older) {
-			t.Fatalf("transcripts %v", got)
-		}
-	})
-	for _, n := range []int{0, -1} {
-		t.Run(fmt.Sprintf("%d disables", n), func(t *testing.T) {
-			h, recent, old, older := setup(t)
-			start(t, h, hours(n))
-			if got, ok := startEventTranscripts(t, h); ok {
-				t.Fatalf("transcripts %v", got)
-			}
-			if !exists(recent) || !exists(old) || !exists(older) {
-				t.Fatal("a transcript was removed")
-			}
-		})
-	}
 	t.Run("nothing to report adds no key", func(t *testing.T) {
 		h := newHarness(t, fakeConfig{})
-		start(t, h, nil)
+		start(t, h)
 		if got, ok := startEventTranscripts(t, h); ok {
 			t.Fatalf("transcripts %v", got)
 		}
@@ -268,7 +245,7 @@ func TestStartPrunesTranscripts(t *testing.T) {
 		other := filepath.Join(proj, tsA+".jsonl")
 		putTranscript(t, own, 150, 90*time.Hour)
 		putTranscript(t, other, 250, 90*time.Hour)
-		start(t, h, nil)
+		start(t, h)
 		got, _ := startEventTranscripts(t, h)
 		if got["removed"] != int64(1) || got["removed_bytes"] != int64(250) || got["kept"] != int64(0) || !exists(own) || exists(other) {
 			t.Fatalf("transcripts %v", got)

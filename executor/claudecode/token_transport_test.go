@@ -67,7 +67,8 @@ func TestRoundTokenTransport(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				a := New(Options{Token: tc.token, KillGrace: 10 * time.Millisecond}).(*adapter)
+				a := New(Options{Token: tc.token}).(*adapter)
+				a.killGrace = 10 * time.Millisecond
 				s := &session{a: a, task: executor.Task{}, emit: func(map[string]any) {}, bin: bin, env: a.childEnv("", tc.token), root: dir, dir: dir, role: executor.RoleBuild}
 				base, cancel := context.WithCancelCause(context.Background())
 				ctx := startupDeadline{base}

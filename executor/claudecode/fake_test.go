@@ -455,7 +455,7 @@ func (f *fakeEnv) options(extraEnv ...string) Options {
 		writeStandIn(f.t, RuntimePath(home), "#!/bin/sh\nexec '"+strings.ReplaceAll(exe, "'", `'\''`)+"' \"$@\"\n", 0o755)
 	}
 	env := append(os.Environ(), "KOGEN_FAKE_CLAUDE="+filepath.Join(f.cfgDir, "config.json"))
-	return Options{Home: home, HookCommand: []string{exe}, Env: append(env, extraEnv...), KillGrace: 2 * time.Second}
+	return Options{Home: home, HookCommand: []string{exe}, Env: append(env, extraEnv...)}
 }
 
 func (f *fakeEnv) argv(round int) []string {
@@ -509,7 +509,9 @@ func (d *driver) Name() string { return executor.ClaudeCode }
 func (d *driver) Prepare(t *testing.T, root string, s conformance.Script) (executor.Executor, executor.Task) {
 	f := newFake(t, fakeConfig{Script: s})
 	d.cur = f
-	return New(f.options()), executor.Task{
+	a := New(f.options()).(*adapter)
+	a.killGrace = 2 * time.Second
+	return a, executor.Task{
 		Model: "claude-sonnet-5-5", Effort: "high", RunID: "run-1", MaxRounds: 6,
 		Brief: executor.Brief{Stable: "STABLE brief", Dynamic: "DYNAMIC files"},
 		Home:  t.TempDir(), Dir: filepath.Join(t.TempDir(), "executor"),

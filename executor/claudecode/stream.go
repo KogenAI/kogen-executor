@@ -654,7 +654,7 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 	switch {
 	case subtype == "error_max_turns":
 		ending = executor.EndNoCall
-		claim = "Claude Code stopped because it reached the turn limit of " + strconv.Itoa(s.a.opts.MaxTurns) + " turns for this round."
+		claim = "Claude Code stopped because it reached the turn limit of " + strconv.Itoa(maxTurns) + " turns for this round."
 	case subtype == "success" && !isErr:
 		if exit != 0 && !killed {
 			return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "Claude Code exited with status "+strconv.Itoa(exit)+" after a success result"+stderrTail(stderrPath, s.a.redact))

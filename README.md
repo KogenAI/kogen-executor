@@ -32,8 +32,7 @@ changing the target's permissions. You are responsible for securing the target
 and its contents appropriately.
 
 Every `Start` removes session transcripts under `config/projects` that were last
-modified more than the retention period ago (default 24 hours, set by
-`Options.TranscriptRetention`; 0 disables pruning) and reports the result in the
+modified more than 24 hours ago and reports the result in the
 `executor_started` event. Symlinks and other configuration files are never touched.
 
 See the [environment configuration policy](docs/configuration.md) and the

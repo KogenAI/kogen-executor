@@ -56,7 +56,7 @@ func TestIntentNonbuildWakeup(t *testing.T) {
   for _,role:=range spec.Roles {t.Run(role,func(t *testing.T){
    denied:=[]string{spec.Wakeup};if role=="shape" {denied=append(append([]string{},spec.ShapeTools...),spec.Wakeup)}
    for _,n:=range spec.Rounds {
-    a:=roleRoundArgs(Options{SettingSources:"project"},role,"SCHEMA","SESSION",n,"MODEL","EFFORT","SETTINGS",150)
+    a:=roleRoundArgs(role,"SCHEMA","SESSION",n,"MODEL","EFFORT","SETTINGS")
     if !reflect.DeepEqual(intentDenied(a),denied) {t.Errorf("%s round %d denials %q want %q",role,n,intentDenied(a),denied)}
     want:=intentExpected(n,constraintsFor(role),"SCHEMA")
     if role=="build" {

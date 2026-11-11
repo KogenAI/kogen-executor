@@ -158,7 +158,7 @@ func hasStrippedPrefix(k string) bool {
 // -p reads the prompt from stdin, which has no size limit (see session.runRound). Everything is
 // passed again on every round: -p --resume restores neither the permission mode, --settings nor
 // --mcp-config. Never --bare, --dangerously-skip-permissions, bypassPermissions or --continue.
-func roundArgs(o Options, sessionID string, n int, model, effort, settingsPath string, maxTurns int) []string {
+func roundArgs(sessionID string, n int, model, effort, settingsPath string) []string {
 	args := []string{"-p"}
 	if n == 1 {
 		args = append(args, "--session-id", sessionID)
@@ -175,7 +175,7 @@ func roundArgs(o Options, sessionID string, n int, model, effort, settingsPath s
 		"--output-format", "stream-json", "--verbose", "--include-hook-events",
 		"--permission-mode", "acceptEdits", "--permission-prompts", "none",
 		"--allowedTools", "Bash",
-		"--settings", settingsPath, "--setting-sources", o.SettingSources,
+		"--settings", settingsPath, "--setting-sources", "",
 		"--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`,
 		"--no-chrome",
 		"--max-turns", strconv.Itoa(maxTurns),
@@ -191,8 +191,8 @@ func roundArgs(o Options, sessionID string, n int, model, effort, settingsPath s
 // every invocation, the first with --session-id (never --resume, --continue or --fork-session)
 // and later feedback rounds of the same role session with --resume; Shape and Review frame the
 // task with their own constraints.
-func roleRoundArgs(o Options, role, schema, sessionID string, n int, model, effort, settingsPath string, maxTurns int) []string {
-	args := roundArgs(o, sessionID, n, model, effort, settingsPath, maxTurns)
+func roleRoundArgs(role, schema, sessionID string, n int, model, effort, settingsPath string) []string {
+	args := roundArgs(sessionID, n, model, effort, settingsPath)
 	if role == "" || role == "build" {
 		return append(args, "--disallowedTools", wakeupTool, "--json-schema", schema)
 	}

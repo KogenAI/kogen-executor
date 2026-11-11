@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// defaultTranscriptRetention is the retention period when Options.TranscriptRetention is nil.
-const defaultTranscriptRetention = 24 * time.Hour
-
 // transcriptEntryBound caps the directory entries one Start reads while pruning transcripts.
 const transcriptEntryBound = 10000
 
@@ -36,14 +33,6 @@ func (r transcriptReport) event() map[string]any {
 		"remove_failed": r.removeFailed,
 		"bound_reached": r.boundReached,
 	}
-}
-
-// transcriptRetention is the effective retention period and whether pruning is enabled.
-func (a *adapter) transcriptRetention() (time.Duration, bool) {
-	if a.opts.TranscriptRetention == nil {
-		return defaultTranscriptRetention, true
-	}
-	return *a.opts.TranscriptRetention, *a.opts.TranscriptRetention > 0
 }
 
 // pruneTranscripts removes the session transcripts under <config>/projects that were last

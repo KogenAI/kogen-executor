@@ -99,7 +99,7 @@ func TestBoundedGuardAcceptance(t *testing.T) {
  case "cancel":
   h:=newHarness(t,fakeConfig{Script:oneRound(conformance.RoundScript{Actions:[]conformance.Action{{Write:&conformance.WriteAction{Path:"huge",Content:"replacement"}},{Shell:"sleep 30"}},End:"finish"})})
   f,e:=os.Create(filepath.Join(h.root,"huge"));if e!=nil {t.Fatal(e)};if e=f.Truncate(1<<34);e!=nil {t.Fatal(e)};f.Close()
-  o:=h.f.options();o.KillGrace=300*time.Millisecond;s,e:=h.start(o);if e!=nil {t.Fatal(e)};defer s.Close()
+  h.tune=func(a *adapter){a.killGrace=300*time.Millisecond};s,e:=h.start(h.f.options());if e!=nil {t.Fatal(e)};defer s.Close()
   ctx,cancel:=context.WithCancel(context.Background());defer cancel();time.AfterFunc(500*time.Millisecond,cancel)
   start:=time.Now();_,e=s.Round(ctx,executor.Input{});wantError(t,e,"executor/interrupted")
   // Normal grace plus a small local scheduling allowance, not child completion.
