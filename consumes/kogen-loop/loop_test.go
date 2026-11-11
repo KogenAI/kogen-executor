@@ -22,7 +22,7 @@ func TestProviderConsumption(t *testing.T) {
 		t.Fatal("agent/budget.go override")
 	}
 	r := provider.Role{Provider: "anthropic", Model: "m", Effort: "e", BaseURL: "u"}
-	if provider.Name(r) != "anthropic" || r.Model != "m" || r.Effort != "e" || r.BaseURL != "u" || provider.Name(provider.Role{}) != "chatgpt" || provider.Name(provider.Role{Provider: "other"}) != "other" {
+	if r.Provider != "anthropic" || r.Model != "m" || r.Effort != "e" || r.BaseURL != "u" {
 		t.Fatal("core/state.go provider role routing")
 	}
 	n := 7

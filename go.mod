@@ -3,8 +3,7 @@ module github.com/KogenAI/kogen-executor
 go 1.27.2
 
 require (
-	github.com/KogenAI/kogen-coordinator v0.0.0-20261104010828-f15509472852
-	github.com/KogenAI/kogen-loop v0.0.0-20261104002337-25d87c2177c3
+	github.com/KogenAI/kogen-coordinator v0.0.0-20261111112437-c6aafd03296b
+	github.com/KogenAI/kogen-loop v0.0.0-20261111104243-16bc90355dfb
+	golang.org/x/text v0.43.0
 )
-
-require golang.org/x/text v0.43.0

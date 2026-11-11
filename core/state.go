@@ -49,7 +49,7 @@ func fromUsage(u provider.Usage) Tokens {
 // count and may omit any other, so its totals come from the validated analytical usage; the
 // other routes' compatible totals are always integers.
 func ResponseTokens(role project.Role, resp *provider.Response) Tokens {
-	if provider.Name(ProviderRole(role)) == "anthropic" {
+	if role.Provider == "anthropic" {
 		k := resp.Known
 		return Tokens{k.Input, k.Cached, k.Output, k.Reasoning}
 	}
