@@ -638,7 +638,7 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 	}
 	terminal, _ := res["terminal_reason"].(string)
 	// `claude auth status` checks local state, not whether the server accepts the sign-in.
-	if isErr && (r.authFailed || authFailedText(res["result"])) {
+	if isErr && (r.authFailed || authFailedText(res)) {
 		detail := "Claude Code did not accept the sign-in; sign in again with `kogen provider login claude-code`"
 		if s.a.opts.Token != "" {
 			detail = tokenRefusedHint
@@ -699,19 +699,22 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 		}
 		// Claude Code refuses a prompt over the model's context: a context result, not an
 		// ordinary failure, and never retried or clipped.
-		if isErr && !r.authFailed && !authFailedText(res["result"]) && (terminal == "blocking_limit" || promptTooLongText(res["result"])) {
-			text, _ := res["result"].(string)
+		if isErr && !r.authFailed && !authFailedText(res) && (terminal == "blocking_limit" || promptTooLong(res) != "") {
+			text := promptTooLong(res)
+			if text == "" {
+				text, _ = res["result"].(string)
+			}
 			return executor.RoundResult{}, sys.Fail("candidate", "context_budget_exceeded", "Claude Code refused the "+s.role+" prompt as too long for the model's context (terminal reason "+
 				quoteBound(terminal)+": "+bound(text, 200)+"); the round's prompt was "+strconv.Itoa(s.promptLen)+" bytes; nothing was clipped or retried", 1)
 		}
 		reason := executor.ReasonFailed
-		if isErr && !r.authFailed && !authFailedText(res["result"]) && ((subtype == "success" && terminal == "api_error" && r.rateLimited) || usageLimitText(res["result"]) || usageLimitText(res["errors"])) {
+		if isErr && !r.authFailed && !authFailedText(res) && ((subtype == "success" && terminal == "api_error" && r.rateLimited) || usageLimitText(res["result"]) || usageLimitText(res["errors"])) {
 			if len(r.pending) != 0 {
 				return executor.RoundResult{}, executor.Fail(executor.ReasonProtocol, "usage-limit result left tool calls unfinished; continuation is unsafe")
 			}
 			reason = executor.ReasonUsageLimit
 		}
-		if reason == executor.ReasonFailed && isErr && !r.authFailed && !authFailedText(res["result"]) {
+		if reason == executor.ReasonFailed && isErr && !r.authFailed && !authFailedText(res) {
 			diagnostic := providerDiagnostic(res["result"])
 			if diagnostic == "" {
 				diagnostic = providerDiagnostic(res["errors"])
@@ -1036,16 +1039,42 @@ func stderrTail(path string, redact func(string) string) string {
 	return "; stderr: " + strings.ReplaceAll(bound(s, n), "\n", " | ")
 }
 
-// promptTooLongText reports whether a result text is Claude Code's refusal of an oversized prompt.
-func promptTooLongText(v any) bool {
-	t, _ := v.(string)
-	return strings.Contains(t, "Prompt is too long")
+// resultTexts lists the strings of a result's text and its errors list, in that order.
+// Non-string items are skipped.
+func resultTexts(res map[string]any) []string {
+	var out []string
+	if t, ok := res["result"].(string); ok {
+		out = append(out, t)
+	}
+	if errs, ok := res["errors"].([]any); ok {
+		for _, item := range errs {
+			if t, ok := item.(string); ok {
+				out = append(out, t)
+			}
+		}
+	}
+	return out
 }
 
-// authFailedText reports whether a result text is Claude Code's 401 authentication failure.
-func authFailedText(v any) bool {
-	t, _ := v.(string)
-	return strings.Contains(t, "Failed to authenticate") || strings.Contains(t, "API Error: 401")
+// promptTooLong returns the first text of a result or its errors that is Claude Code's
+// refusal of an oversized prompt, or "" when there is none.
+func promptTooLong(res map[string]any) string {
+	for _, t := range resultTexts(res) {
+		if strings.Contains(t, "Prompt is too long") {
+			return t
+		}
+	}
+	return ""
+}
+
+// authFailedText reports whether a result or its errors carry Claude Code's 401 authentication failure.
+func authFailedText(res map[string]any) bool {
+	for _, t := range resultTexts(res) {
+		if strings.Contains(t, "Failed to authenticate") || strings.Contains(t, "API Error: 401") {
+			return true
+		}
+	}
+	return false
 }
 
 // decodeBlocker types a Build blocker object. Anything but exactly the three typed fields

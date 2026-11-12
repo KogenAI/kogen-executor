@@ -1,0 +1,1 @@
+{"deferred":"The step reuses the package's internal fake Claude runtime; wrong-implementation overlays on the large stream.go are not honestly writable within the shaping budget."}
