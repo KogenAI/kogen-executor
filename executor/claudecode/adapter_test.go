@@ -193,6 +193,29 @@ func TestVersionGate(t *testing.T) {
 	}
 }
 
+// An unreadable (non-object) status answer on a successful exit is unavailable, not a refusal.
+func TestAuthStatusUnreadableAnswerIsUnavailable(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct{ auth, want string }{
+		"banner": {`signed in as someone`, `"signed in as someone"`},
+		"null":   {`null`, `"null"`},
+		"array":  {`[1]`, `"[1]"`},
+		"string": {`"x"`, `"\"x\""`},
+		"empty":  {`  `, "(empty)"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, fakeConfig{Auth: c.auth, Script: oneRound(finishRound)})
+			_, err := h.start(h.f.options())
+			e := wantError(t, err, "executor/unavailable")
+			if !strings.Contains(e.Detail, "unreadable") || !strings.Contains(e.Detail, c.want) {
+				t.Fatalf("detail %q", e.Detail)
+			}
+		})
+	}
+}
+
 func TestAuthGate(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
@@ -200,7 +223,6 @@ func TestAuthGate(t *testing.T) {
 		"api key route": `{"loggedIn":true,"authMethod":"api_key","apiProvider":"firstParty"}`,
 		"console":       `{"loggedIn":true,"authMethod":"console","apiProvider":"firstParty"}`,
 		"bedrock":       `{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"bedrock"}`,
-		"not json":      `signed in as someone`,
 		"empty":         `{}`,
 	}
 	for name, auth := range cases {

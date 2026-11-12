@@ -549,11 +549,11 @@ func (a *adapter) authStatus(ctx context.Context, bin string, env []string) (aut
 		return authInfo{}, classify(ctx)
 	}
 	var info authInfo
-	if err := json.Unmarshal(out, &info); err != nil {
+	if err := json.Unmarshal(out, &info); err != nil || !bytes.HasPrefix(bytes.TrimSpace(out), []byte("{")) {
 		if runErr != nil {
 			return info, executor.Fail(executor.ReasonUnavailable, "`claude auth status --json` failed; "+kogenLogin)
 		}
-		return info, executor.Fail(executor.ReasonAuthRefused, "`claude auth status --json` did not answer with JSON")
+		return info, executor.Fail(executor.ReasonUnavailable, unreadableStatusDetail(a.redact(string(out))))
 	}
 	switch {
 	case !info.LoggedIn && a.opts.Token != "":
@@ -569,6 +569,17 @@ func (a *adapter) authStatus(ctx context.Context, bin string, env []string) (aut
 		return info, executor.Fail(executor.ReasonUnavailable, "`claude auth status --json` failed; "+kogenLogin)
 	}
 	return info, nil
+}
+
+// unreadableStatusDetail names a status answer that is not a JSON object and quotes a bounded
+// excerpt of it (already redacted), or says it was empty.
+func unreadableStatusDetail(redacted string) string {
+	const head = "`claude auth status --json` gave an unreadable answer"
+	excerpt := strings.TrimSpace(redacted)
+	if excerpt == "" {
+		return head + " (empty); " + kogenLogin
+	}
+	return head + ": " + strconv.Quote(bound(excerpt, 200))
 }
 
 // hookSettings is the --settings JSON: a blocking PreToolUse guard on the file-writing tools
