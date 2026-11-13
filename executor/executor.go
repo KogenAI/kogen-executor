@@ -239,11 +239,14 @@ type Session interface {
 const (
 	ReasonUnavailable         = "unavailable"
 	ReasonProviderUnavailable = "provider_unavailable"
-	ReasonAuthRefused         = "auth_refused"
-	ReasonFailed              = "failed"
-	ReasonUsageLimit          = "usage_limit"
-	ReasonProtocol            = "protocol"
-	ReasonDeadline            = "deadline"
+	// ReasonProviderBlocked: a Cloudflare challenge in front of the provider (HTTP 403), a
+	// network block and not a refused sign-in; retried before it is reported.
+	ReasonProviderBlocked = "provider_blocked"
+	ReasonAuthRefused     = "auth_refused"
+	ReasonFailed          = "failed"
+	ReasonUsageLimit      = "usage_limit"
+	ReasonProtocol        = "protocol"
+	ReasonDeadline        = "deadline"
 	// ReasonInterrupted: the round context was cancelled (a sys.Interrupted from a signal
 	// keeps its own exit code and may be returned instead).
 	ReasonInterrupted = "interrupted"

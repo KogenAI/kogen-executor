@@ -637,6 +637,12 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 		return executor.RoundResult{}, executor.Fail(executor.ReasonProtocol, "the result has no boolean is_error flag")
 	}
 	terminal, _ := res["terminal_reason"].(string)
+	// A Cloudflare challenge also reads "Failed to authenticate", but it blocks the network
+	// path, not the sign-in: classify it before the auth check.
+	if isErr && cloudflareBlocked(res) {
+		return executor.RoundResult{}, executor.Fail(executor.ReasonProviderBlocked, "Cloudflare challenge: the provider's network edge answered Claude Code with HTTP 403 "+
+			"\"Attention Required! | Cloudflare\" instead of the API; the sign-in was not judged")
+	}
 	// `claude auth status` checks local state, not whether the server accepts the sign-in.
 	if isErr && (r.authFailed || authFailedText(res)) {
 		detail := "Claude Code did not accept the sign-in; sign in again with `kogen provider login claude-code`"
@@ -1065,6 +1071,18 @@ func promptTooLong(res map[string]any) string {
 		}
 	}
 	return ""
+}
+
+// cloudflareBlocked reports whether an error result is Cloudflare's challenge page (HTTP 403)
+// and not the API's own answer.
+func cloudflareBlocked(res map[string]any) bool {
+	for _, t := range resultTexts(res) {
+		l := strings.ToLower(t)
+		if strings.Contains(l, "attention required! | cloudflare") || (strings.Contains(l, "cloudflare") && (strings.Contains(l, "api error: 403") || strings.Contains(l, "you have been blocked") || strings.Contains(l, "cf-ray") || strings.Contains(l, "ray id"))) {
+			return true
+		}
+	}
+	return false
 }
 
 // authFailedText reports whether a result or its errors carry Claude Code's 401 authentication failure.

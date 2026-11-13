@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,8 @@ type fakeConfig struct {
 	Init map[string]any `json:"init"`
 	// Result is merged into the result event; a null value deletes the key.
 	Result map[string]any `json:"result"`
+	// ResultOn, when set, limits Result to these claude invocation numbers (1-based).
+	ResultOn []int `json:"result_on"`
 	// UsageRaw replaces result.usage when set.
 	UsageRaw map[string]any `json:"usage_raw"`
 	// TotalCosts are the cumulative total_cost_usd values per round (default: derived).
@@ -382,7 +385,9 @@ func fakeClaude(cfgPath string, args []string) int {
 	if n-1 < len(cfg.TotalCosts) {
 		res["total_cost_usd"] = cfg.TotalCosts[n-1]
 	}
-	merge(res, cfg.Result)
+	if len(cfg.ResultOn) == 0 || slices.Contains(cfg.ResultOn, n) {
+		merge(res, cfg.Result)
+	}
 	out(res)
 	if wakeupScheduled {
 		out(map[string]any{"type": "command_lifecycle", "state": "started", "wakeup_source": "loop_wakeup"})

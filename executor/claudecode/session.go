@@ -104,6 +104,19 @@ func (s *session) Round(ctx context.Context, in executor.Input) (executor.RoundR
 	s.emit(map[string]any{"event": "executor_round_started", "role": s.role, "round": n, "session_id": s.sessionID, "resume": n > 1})
 	rr := &roundRun{s: s, n: n, deadlineRemaining: remaining, started: time.Now()}
 	res, err := s.runRound(ctx, n, prompt, rr)
+	// A Cloudflare challenge is transient: run the same round again (a later round resumes the
+	// session) after a bounded backoff, unless tool calls were left unfinished.
+	for try := 0; isBlocked(err) && try < len(blockedBackoff) && len(rr.pending) == 0; try++ {
+		s.emit(map[string]any{"event": "executor_round_retry", "role": s.role, "round": n, "reason": executor.ReasonProviderBlocked, "attempt": try + 2, "wait_ms": blockedBackoff[try].Milliseconds()})
+		select {
+		case <-time.After(blockedBackoff[try]):
+		case <-ctx.Done():
+			err = rr.classifyContext(ctx)
+			continue // no longer blocked: the loop ends
+		}
+		rr = &roundRun{s: s, n: n, deadlineRemaining: remaining, started: time.Now()}
+		res, err = s.runRound(ctx, n, prompt, rr)
+	}
 	if err != nil {
 		s.failed = true
 		reason, detail := "failed", err.Error()
@@ -543,4 +556,13 @@ func trimEOL(b []byte) []byte {
 		b = b[:len(b)-1]
 	}
 	return b
+}
+
+// blockedBackoff are the waits before the second and third try of a round that met a Cloudflare
+// challenge: three tries over three minutes.
+var blockedBackoff = []time.Duration{time.Minute, 2 * time.Minute}
+
+func isBlocked(err error) bool {
+	e, ok := sys.AsError(err)
+	return ok && e.Class == "executor" && e.Reason == executor.ReasonProviderBlocked
 }
