@@ -359,6 +359,12 @@ func TestConfigDirectoryPermissions(t *testing.T) {
 				t.Fatal(err)
 			}
 			writeStandIn(t, RuntimePath(home), "runtime\n", 0o700)
+			// installer checks the size pinned for its fixed platform, not this host's.
+			if want, ok := pinFor("linux", "amd64"); ok {
+				if err := os.Truncate(RuntimePath(home), want.size); err != nil {
+					t.Fatal(err)
+				}
+			}
 			config := ConfigDir(home)
 			target := config
 			if kind == "linked" {

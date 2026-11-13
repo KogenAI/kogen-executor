@@ -1,0 +1,1 @@
+{"deferred":"The requested behaviour is already implemented at HEAD (stripEnv in executor/claudecode/args.go and both documents), so there is no implementation overlay to write; the acceptance observes the existing implementation."}
