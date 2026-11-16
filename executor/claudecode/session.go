@@ -49,6 +49,7 @@ type session struct {
 	failed    bool
 	prevCost  float64
 	costGap   bool
+	modelBase map[string]map[string]float64 // raw model id -> field -> value in the last successful round's modelUsage
 	model     string
 
 	closed atomic.Bool

@@ -1,0 +1,147 @@
+package claudecode
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+// The acceptance driver of exec-round-model-usage-states-its-scope. Its round and
+// observation helpers are prefixed rms so they cannot collide with the Build's own tests.
+
+type rmsSession struct {
+	t      *testing.T
+	s      *session
+	events []map[string]any
+	n      int
+}
+
+func rmsNew(t *testing.T) *rmsSession {
+	root := t.TempDir()
+	d := &rmsSession{t: t}
+	d.s = &session{a: &adapter{}, root: root, role: executor.RoleBuild, sessionID: "s", pol: policy{Log: filepath.Join(root, "hook.log"), Nonce: "n"}, emit: func(e map[string]any) { d.events = append(d.events, e) }}
+	return d
+}
+
+func rmsDecode(t *testing.T, line string) map[string]any {
+	var res map[string]any
+	dec := json.NewDecoder(strings.NewReader(line))
+	dec.UseNumber()
+	if err := dec.Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func rmsResult(modelUsage string, cost string) string {
+	s := `{"type":"result","subtype":"success","is_error":false,"session_id":"s","result":"done"`
+	if cost != "" {
+		s += `,"total_cost_usd":` + cost
+	}
+	if modelUsage != "" {
+		s += `,"modelUsage":` + modelUsage
+	}
+	return s + `}`
+}
+
+// ended runs one successful round and returns its executor_round_ended event.
+func (d *rmsSession) ended(modelUsage, cost string) map[string]any {
+	d.t.Helper()
+	d.n++
+	before := len(d.events)
+	r := &roundRun{s: d.s, n: d.n, init: true}
+	if err := r.line([]byte(rmsResult(modelUsage, cost))); err != nil {
+		d.t.Fatal(err)
+	}
+	if _, err := r.finish(0, false, ""); err != nil {
+		d.t.Fatal(err)
+	}
+	for _, e := range d.events[before:] {
+		if e["event"] == "executor_round_ended" {
+			return e
+		}
+	}
+	d.t.Fatalf("no executor_round_ended event: %v", d.events[before:])
+	return nil
+}
+
+// failed reports a failed round's event the way the failed-round path builds it.
+func (d *rmsSession) failed(modelUsage string) map[string]any {
+	d.t.Helper()
+	d.n++
+	event := map[string]any{"event": "executor_round_failed", "round": d.n}
+	(&roundRun{s: d.s, n: d.n, model: "m", result: rmsDecode(d.t, rmsResult(modelUsage, ""))}).addResult(event)
+	return event
+}
+
+func rmsJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+func rmsKeep(t *testing.T, ev map[string]any, key, want string) {
+	t.Helper()
+	got, has := ev[key]
+	if want == "<absent>" {
+		if has {
+			t.Fatalf("round usage observation mismatch: %s present as %s, want absent", key, rmsJSON(got))
+		}
+		return
+	}
+	if !has || rmsJSON(got) != want {
+		t.Fatalf("round usage observation mismatch: %s is %s (present %v), want %s", key, rmsJSON(got), has, want)
+	}
+}
+
+func rmsMU(entries ...string) string { return "{" + strings.Join(entries, ",") + "}" }
+
+func TestRMSAcceptance(t *testing.T) {
+	name := os.Getenv("RMS_SCENARIO")
+	switch name {
+	case "second-round":
+		d := rmsNew(t)
+		d.ended(rmsMU(`"m":{"inputTokens":100,"cacheReadInputTokens":1000,"outputTokens":50,"costUSD":4}`), "4")
+		ev := d.ended(rmsMU(`"m":{"inputTokens":130,"cacheReadInputTokens":1500,"outputTokens":60,"costUSD":4.25}`), "4.25")
+		rmsKeep(t, ev, "model_usage_scope", `"session"`)
+		rmsKeep(t, ev, "model_usage", `[{"cached":1500,"cost_usd":4.25,"input":130,"model":"m","output":60}]`)
+		rmsKeep(t, ev, "model_round_usage", `[{"cached":500,"cost_usd":0.25,"input":30,"model":"m","output":10}]`)
+	case "per-model-baseline":
+		d := rmsNew(t)
+		ev1 := d.ended(rmsMU(`"a":{"inputTokens":10,"outputTokens":5}`), "")
+		rmsKeep(t, ev1, "model_round_usage", `[{"input":10,"model":"a","output":5}]`)
+		ev2 := d.ended(rmsMU(`"a":{"inputTokens":12,"outputTokens":6}`, `"b":{"inputTokens":7,"outputTokens":3}`), "")
+		rmsKeep(t, ev2, "model_round_usage", `[{"input":2,"model":"a","output":1},{"input":7,"model":"b","output":3}]`)
+	case "failed-round":
+		d := rmsNew(t)
+		d.ended(rmsMU(`"m":{"inputTokens":100}`), "")
+		f := d.failed(rmsMU(`"m":{"inputTokens":130}`))
+		rmsKeep(t, f, "model_usage_scope", `"session"`)
+		rmsKeep(t, f, "model_round_usage", `[{"input":30,"model":"m"}]`)
+		ev3 := d.ended(rmsMU(`"m":{"inputTokens":150}`), "")
+		rmsKeep(t, ev3, "model_round_usage", `[{"input":50,"model":"m"}]`)
+	case "counter-reset":
+		d := rmsNew(t)
+		d.ended(rmsMU(`"m":{"inputTokens":130,"outputTokens":40}`), "")
+		ev2 := d.ended(rmsMU(`"m":{"inputTokens":40,"outputTokens":45}`), "")
+		rmsKeep(t, ev2, "model_round_usage", `[{"model":"m","output":5}]`)
+		ev3 := d.ended(rmsMU(`"m":{"inputTokens":55,"outputTokens":50}`), "")
+		rmsKeep(t, ev3, "model_round_usage", `[{"input":15,"model":"m","output":5}]`)
+	case "absent":
+		d := rmsNew(t)
+		ev1 := d.ended("", "1")
+		rmsKeep(t, ev1, "model_usage", "<absent>")
+		rmsKeep(t, ev1, "model_usage_scope", "<absent>")
+		rmsKeep(t, ev1, "model_round_usage", "<absent>")
+		ev2 := d.ended(rmsMU(`"m":{"inputTokens":9}`), "2")
+		rmsKeep(t, ev2, "model_usage_scope", `"session"`)
+		rmsKeep(t, ev2, "model_round_usage", `[{"input":9,"model":"m"}]`)
+	default:
+		t.Fatalf("unknown RMS_SCENARIO %q", name)
+	}
+	fmt.Println("RMS_OK " + name)
+}

@@ -769,6 +769,7 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 	}
 	r.addModels(event)
 	addModelUsage(event, res)
+	s.addModelRoundUsage(event, res, true)
 	r.addDenials(event)
 	r.addRateLimit(event)
 	r.addProfile(event)
@@ -839,6 +840,7 @@ func (r *roundRun) addResult(event map[string]any) {
 		return
 	}
 	addModelUsage(event, res)
+	r.s.addModelRoundUsage(event, res, false)
 	r.addDenials(event)
 	_, hasUsage := res["usage"].(map[string]any)
 	_, hasCost := res["total_cost_usd"].(json.Number)
@@ -884,8 +886,65 @@ func addModelUsage(event, res map[string]any) {
 		entries = append(entries, entry)
 	}
 	event["model_usage"] = entries
+	event["model_usage_scope"] = "session"
 	if len(ids) > 20 {
 		event["model_usage_omitted"] = len(ids) - 20
+	}
+}
+
+// modelUsageFields maps the result's per-model counter names to the event's keys.
+var modelUsageFields = [][2]string{{"inputTokens", "input"}, {"cacheReadInputTokens", "cached"}, {"outputTokens", "output"}, {"costUSD", "cost_usd"}}
+
+// addModelRoundUsage adds model_round_usage next to model_usage: per model, each field's value
+// minus the same model's value in the session's last successful round (zero for a model or field
+// not seen before), rounded to 9 decimals. A field whose number is missing or invalid, or whose
+// difference is negative, is left out; an entry without fields is left out, and so is the key
+// when no entry is left. With advance (a successful round) the baseline then takes the new value
+// of every field that was a valid number, including a lowered one; a failed round passes false
+// and leaves the baseline as it was.
+func (s *session) addModelRoundUsage(event, res map[string]any, advance bool) {
+	if _, ok := event["model_usage"]; !ok {
+		return
+	}
+	breakdown, _ := res["modelUsage"].(map[string]any)
+	var ids []string
+	for id, value := range breakdown {
+		if _, ok := value.(map[string]any); ok {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	var entries []map[string]any
+	for _, id := range ids[:min(len(ids), 20)] {
+		fields := breakdown[id].(map[string]any)
+		base := s.modelBase[id]
+		entry := map[string]any{"model": boundBytes(id, 256)}
+		found := false
+		for _, pair := range modelUsageFields {
+			v, ok := number(fields[pair[0]])
+			if !ok {
+				continue
+			}
+			if d := math.Round((v-base[pair[1]])*1e9) / 1e9; v >= base[pair[1]] {
+				entry[pair[1]] = d
+				found = true
+			}
+			if advance {
+				if s.modelBase == nil {
+					s.modelBase = map[string]map[string]float64{}
+				}
+				if s.modelBase[id] == nil {
+					s.modelBase[id] = map[string]float64{}
+				}
+				s.modelBase[id][pair[1]] = v
+			}
+		}
+		if found {
+			entries = append(entries, entry)
+		}
+	}
+	if len(entries) > 0 {
+		event["model_round_usage"] = entries
 	}
 }
 
