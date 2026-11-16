@@ -88,6 +88,10 @@ func TestFixtureServesSessionRound(t *testing.T) {
 func runFake(t *testing.T, fx *clauderuntime.Fixture, token *string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(claudecode.RuntimePath(fx.Home), args...)
+	if token == nil {
+		// A round without a token must not see a descriptor 3 inherited from the test process.
+		cmd = exec.Command("/bin/sh", append([]string{"-c", `exec "$0" "$@" 3<&-`, claudecode.RuntimePath(fx.Home)}, args...)...)
+	}
 	cmd.Stdin = strings.NewReader("prompt")
 	if token != nil {
 		r, w, err := os.Pipe()

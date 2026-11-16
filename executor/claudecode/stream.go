@@ -469,7 +469,7 @@ func (r *roundRun) toolResults(ev, original map[string]any) error {
 			if !ok {
 				return r.hookFailure(id, name)
 			}
-			r.s.emit(map[string]any{"event": "executor_hook", "round": r.n, "tool_use_id": id, "tool_name": name, "decision": rec.Decision, "hook": "pretool"})
+			r.s.emit(hookEvent(r.n, id, name, rec))
 			if rec.Decision == "deny" {
 				denied = true
 				if !isErr {
@@ -480,6 +480,19 @@ func (r *roundRun) toolResults(ev, original map[string]any) error {
 		r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": name, "tool_use_id": id, "denied": denied, "arguments": r.arguments[id], "result_bytes": size, "result_error": resultErr, "result_items": items})
 	}
 	return nil
+}
+
+// hookEvent builds the executor_hook event of one pretool sentinel record. A denial also names its
+// reason and, when the record has one, its path, verbatim as the hook log holds them.
+func hookEvent(round int, id, name string, rec sentinel) map[string]any {
+	e := map[string]any{"event": "executor_hook", "round": round, "tool_use_id": id, "tool_name": name, "decision": rec.Decision, "hook": "pretool"}
+	if rec.Decision == "deny" {
+		e["reason"] = rec.Reason
+		if rec.Path != "" {
+			e["path"] = rec.Path
+		}
+	}
+	return e
 }
 
 // checkUnanswered validates guarded calls still pending at an accepted result, in tool_use order.
@@ -516,7 +529,7 @@ func (r *roundRun) checkUnanswered() error {
 	}
 	for _, c := range calls {
 		if c.rec != nil {
-			r.s.emit(map[string]any{"event": "executor_hook", "round": r.n, "tool_use_id": c.id, "tool_name": c.name, "decision": c.rec.Decision, "hook": "pretool"})
+			r.s.emit(hookEvent(r.n, c.id, c.name, *c.rec))
 		}
 		r.s.emit(map[string]any{"event": "executor_tool", "round": r.n, "name": c.name, "tool_use_id": c.id, "denied": c.denied, "arguments": r.arguments[c.id], "unanswered": true})
 	}
