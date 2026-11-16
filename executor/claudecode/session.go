@@ -472,6 +472,9 @@ loop:
 	var ee *exec.ExitError
 	if errors.As(waitErr, &ee) {
 		exit = ee.ExitCode()
+		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			rr.endSignal = ws.Signal()
+		}
 	} else if waitErr != nil {
 		exit = -1
 	}

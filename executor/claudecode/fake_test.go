@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -74,6 +75,10 @@ type fakeConfig struct {
 	LingerSeconds float64 `json:"linger_seconds"`
 	// ExitBeforeStdin exits with ExitCode without reading the prompt or emitting any event.
 	ExitBeforeStdin bool `json:"exit_before_stdin"`
+	// Signal, when not 0, ends the fake by this signal at SignalAt ("before_stdin", "after_init" or
+	// "after_result"), in place of the exit that point would make.
+	Signal   int    `json:"signal"`
+	SignalAt string `json:"signal_at"`
 	// AuthFail fails the round like Claude Code does for an invalid CLAUDE_CODE_OAUTH_TOKEN: an
 	// assistant event with error authentication_failed, then an is_error success result with a 401.
 	AuthFail       bool   `json:"auth_fail"`
@@ -170,6 +175,7 @@ func fakeClaude(cfgPath string, args []string) int {
 	os.WriteFile(filepath.Join(cfg.State, fmt.Sprintf("fd3-%d", n)), []byte(readFD3Token()), 0o600)
 	if cfg.ExitBeforeStdin {
 		fmt.Fprintln(os.Stderr, "fake claude: dying before reading the prompt")
+		endBySignal(cfg, "before_stdin")
 		return cfg.ExitCode
 	}
 	promptBytes, err := io.ReadAll(os.Stdin)
@@ -230,7 +236,8 @@ func fakeClaude(cfgPath string, args []string) int {
 		out(authResult)
 		return 1
 	}
-	if cfg.NoResult {
+	if cfg.NoResult || (cfg.Signal != 0 && cfg.SignalAt == "after_init") {
+		endBySignal(cfg, "after_init")
 		return cfg.ExitCode
 	}
 
@@ -406,7 +413,17 @@ func fakeClaude(cfgPath string, args []string) int {
 	if cfg.LingerSeconds > 0 {
 		time.Sleep(time.Duration(cfg.LingerSeconds * float64(time.Second)))
 	}
+	endBySignal(cfg, "after_result")
 	return exit
+}
+
+// endBySignal ends the fake by cfg.Signal when it is set for this point, then blocks.
+func endBySignal(cfg fakeConfig, at string) {
+	if cfg.Signal == 0 || cfg.SignalAt != at {
+		return
+	}
+	syscall.Kill(os.Getpid(), syscall.Signal(cfg.Signal))
+	select {}
 }
 
 func merge(dst, src map[string]any) {

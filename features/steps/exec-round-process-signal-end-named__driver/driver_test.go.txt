@@ -1,0 +1,39 @@
+package claudecode
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"testing"
+
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+// The acceptance driver of exec-round-process-signal-end-named: it ends the fake Claude by a
+// signal at one point and checks the detail of the failed round.
+func TestRSEAcceptance(t *testing.T) {
+	scenario := os.Getenv("RSE_SCENARIO")
+	cases := map[string]struct {
+		cfg  fakeConfig
+		want string
+	}{
+		"before-init": {fakeConfig{ExitBeforeStdin: true, Signal: 15, SignalAt: "before_stdin", Script: oneRound(finishRound)},
+			"Claude Code was ended by signal 15 (terminated) before starting; stderr: fake claude: dying before reading the prompt"},
+		"without-result": {fakeConfig{Signal: 9, SignalAt: "after_init", Script: oneRound(finishRound)},
+			"Claude Code was ended by signal 9 (killed) without a result"},
+		"after-success": {fakeConfig{Signal: 9, SignalAt: "after_result", Script: oneRound(finishRound)},
+			"Claude Code was ended by signal 9 (killed) after a success result"},
+	}
+	c, ok := cases[scenario]
+	if !ok {
+		t.Fatalf("unknown scenario %q", scenario)
+	}
+	h := newHarness(t, c.cfg)
+	s := h.startOK()
+	_, err := s.Round(context.Background(), executor.Input{})
+	e := wantError(t, err, "executor/failed")
+	if e.Detail != c.want {
+		t.Fatalf("detail %q, want %q", e.Detail, c.want)
+	}
+	fmt.Println("RSE_OK " + scenario)
+}

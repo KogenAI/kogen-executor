@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/KogenAI/kogen-executor/executor"
@@ -28,7 +29,8 @@ type roundRun struct {
 	streamLostBytes, streamLostLines, stderrLostBytes int64
 	artifact                                          string
 	keptBytes                                         int64
-	persistFailed                                     bool // a retained artifact failed to persist; a successful result must not be reported
+	persistFailed                                     bool           // a retained artifact failed to persist; a successful result must not be reported
+	endSignal                                         syscall.Signal // the signal that ended the process; 0 when it exited with a status
 
 	s                 *session
 	n                 int
@@ -624,19 +626,27 @@ func (t target) unchanged() bool {
 	return t.absent || (now.mode == t.mode && now.size == t.size && now.mtime.Equal(t.mtime) && now.sum == t.sum)
 }
 
+// processEnd words how the process ended: by a signal, or with an exit status.
+func (r *roundRun) processEnd(exit int) string {
+	if r.endSignal != 0 {
+		return "was ended by signal " + strconv.Itoa(int(r.endSignal)) + " (" + r.endSignal.String() + ")"
+	}
+	return "exited with status " + strconv.Itoa(exit)
+}
+
 // finish turns the seen result event and the process exit into the round's claim or error.
 // exit is the process exit code (-1: signalled); killed means the adapter ended the process.
 func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.RoundResult, error) {
 	s := r.s
 	if !r.init {
 		if exit != 0 {
-			return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "Claude Code exited with status "+strconv.Itoa(exit)+" before starting"+stderrTail(stderrPath, s.a.redact))
+			return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "Claude Code "+r.processEnd(exit)+" before starting"+stderrTail(stderrPath, s.a.redact))
 		}
 		return executor.RoundResult{}, executor.Fail(executor.ReasonProtocol, "Claude Code ended without any event stream")
 	}
 	if r.result == nil {
 		if exit != 0 {
-			return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "Claude Code exited with status "+strconv.Itoa(exit)+" without a result"+stderrTail(stderrPath, s.a.redact))
+			return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "Claude Code "+r.processEnd(exit)+" without a result"+stderrTail(stderrPath, s.a.redact))
 		}
 		return executor.RoundResult{}, executor.Fail(executor.ReasonProtocol, "the event stream ended without a result event")
 	}
@@ -676,7 +686,7 @@ func (r *roundRun) finish(exit int, killed bool, stderrPath string) (executor.Ro
 		claim = "Claude Code stopped because it reached the turn limit of " + strconv.Itoa(maxTurns) + " turns for this round."
 	case subtype == "success" && !isErr:
 		if exit != 0 && !killed {
-			return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "Claude Code exited with status "+strconv.Itoa(exit)+" after a success result"+stderrTail(stderrPath, s.a.redact))
+			return executor.RoundResult{}, executor.Fail(executor.ReasonFailed, "Claude Code "+r.processEnd(exit)+" after a success result"+stderrTail(stderrPath, s.a.redact))
 		}
 		ending = executor.EndFinish
 		text, ok := res["result"].(string)
