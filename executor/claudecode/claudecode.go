@@ -230,6 +230,23 @@ func (a *adapter) redact(s string) string {
 
 // run runs a no-model-call claude subcommand with the stripped environment and a bounded output.
 func (a *adapter) run(ctx context.Context, bin string, env []string, token string, args ...string) ([]byte, error) {
+	out, end, stderr, ctxErr := a.runChild(ctx, bin, env, token, args...)
+	if ctxErr != nil {
+		return out, ctxErr
+	}
+	if end != "" {
+		detail := "`claude " + strings.Join(args, " ") + "` failed: " + end
+		if stderr != "" {
+			detail += "; stderr: " + stderr
+		}
+		return out, executor.Fail(executor.ReasonUnavailable, detail)
+	}
+	return out, nil
+}
+
+// runChild runs the child and returns its output, the wording of how it ended (empty on
+// success), its redacted, trimmed stderr bounded to 300 bytes and the caller's context error.
+func (a *adapter) runChild(ctx context.Context, bin string, env []string, token string, args ...string) ([]byte, string, string, error) {
 	if env == nil {
 		env = a.childEnv("", "")
 	}
@@ -240,9 +257,21 @@ func (a *adapter) run(ctx context.Context, bin string, env []string, token strin
 	var buf, errBuf limitedBuffer
 	cmd.Stdout, cmd.Stderr = &buf, &errBuf
 	cmd.WaitDelay = 2 * time.Second
+	end := ""
 	err := startWithToken(cmd, token, cmd.Start)
-	if err == nil {
-		err = cmd.Wait()
+	if err != nil {
+		end = "could not start: " + err.Error()
+	} else if err = cmd.Wait(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			var sig syscall.Signal
+			if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+				sig = ws.Signal()
+			}
+			end = processEnd(sig, ee.ExitCode())
+		} else {
+			end = "failed while waiting: " + err.Error()
+		}
 	}
 	if cmd.Process != nil {
 		// Run has reaped the leader; stop any children it left behind, including
@@ -253,11 +282,11 @@ func (a *adapter) run(ctx context.Context, bin string, env []string, token strin
 	}
 	if err != nil {
 		if ctx.Err() != nil {
-			return buf.Bytes(), classify(ctx)
+			return buf.Bytes(), "", "", classify(ctx)
 		}
-		return buf.Bytes(), executor.Fail(executor.ReasonUnavailable, "`claude "+strings.Join(args, " ")+"` failed: "+bound(a.redact(strings.TrimSpace(errBuf.String())), 300))
+		return buf.Bytes(), end, bound(a.redact(strings.TrimSpace(errBuf.String())), 300), nil
 	}
-	return buf.Bytes(), nil
+	return buf.Bytes(), "", "", nil
 }
 
 // tokenPipe returns the read end of a fresh pipe holding exactly token, its write end closed.
@@ -544,14 +573,18 @@ const tokenAuthMethod = "oauth_token"
 // authStatus runs `claude auth status --json` with the stripped env and requires the
 // subscription sign-in on Anthropic's own API.
 func (a *adapter) authStatus(ctx context.Context, bin string, env []string) (authInfo, error) {
-	out, runErr := a.run(ctx, bin, env, a.opts.Token, "auth", "status", "--json")
+	out, end, _, ctxErr := a.runChild(ctx, bin, env, a.opts.Token, "auth", "status", "--json")
 	if ctx.Err() != nil {
 		return authInfo{}, classify(ctx)
 	}
+	if ctxErr != nil {
+		return authInfo{}, ctxErr
+	}
+	failed := executor.Fail(executor.ReasonUnavailable, "`claude auth status --json` failed ("+end+"); "+kogenLogin)
 	var info authInfo
 	if err := json.Unmarshal(out, &info); err != nil || !bytes.HasPrefix(bytes.TrimSpace(out), []byte("{")) {
-		if runErr != nil {
-			return info, executor.Fail(executor.ReasonUnavailable, "`claude auth status --json` failed; "+kogenLogin)
+		if end != "" {
+			return info, failed
 		}
 		return info, executor.Fail(executor.ReasonUnavailable, unreadableStatusDetail(a.redact(string(out))))
 	}
@@ -565,8 +598,8 @@ func (a *adapter) authStatus(ctx context.Context, bin string, env []string) (aut
 	case info.APIProvider != "firstParty":
 		return info, executor.Fail(executor.ReasonAuthRefused, "Claude Code's API provider is "+quoteBound(info.APIProvider)+", not Anthropic's own (firstParty)")
 	}
-	if runErr != nil {
-		return info, executor.Fail(executor.ReasonUnavailable, "`claude auth status --json` failed; "+kogenLogin)
+	if end != "" {
+		return info, failed
 	}
 	return info, nil
 }

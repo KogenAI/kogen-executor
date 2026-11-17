@@ -1,0 +1,74 @@
+package claudecode
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// The acceptance driver of exec-preflight-failure-names-how-child-ended: it runs a stand-in
+// Claude Code script through the adapter's run and authStatus and checks the failure detail.
+func pfaScript(t *testing.T, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestPFAcceptance(t *testing.T) {
+	scenario := os.Getenv("PFA_SCENARIO")
+	a := New(Options{Home: t.TempDir()}).(*adapter)
+	const login = "make a token with `claude setup-token` and save it with `kogen provider login claude-code`"
+	runDetail := func(path string) string {
+		_, err := a.run(context.Background(), path, nil, "", "--version")
+		return wantError(t, err, "executor/unavailable").Detail
+	}
+	authDetail := func(path string) string {
+		_, err := a.authStatus(context.Background(), path, a.childEnv("", ""))
+		return wantError(t, err, "executor/unavailable").Detail
+	}
+	check := func(got, want string) {
+		t.Helper()
+		if got != want {
+			t.Fatalf("detail %q, want %q", got, want)
+		}
+	}
+	switch scenario {
+	case "exit-status":
+		check(runDetail(pfaScript(t, "exit 3")), "`claude --version` failed: exited with status 3")
+	case "exit-status-stderr":
+		check(runDetail(pfaScript(t, "echo boom >&2; exit 3")), "`claude --version` failed: exited with status 3; stderr: boom")
+	case "signal":
+		check(runDetail(pfaScript(t, "kill -9 $$")), "`claude --version` failed: was ended by signal 9 (killed)")
+	case "start-error":
+		missing := filepath.Join(t.TempDir(), "missing")
+		check(runDetail(missing), "`claude --version` failed: could not start: fork/exec "+missing+": no such file or directory")
+	case "stderr-bounded":
+		got := runDetail(pfaScript(t, "printf '%0400d' 0 >&2; exit 4"))
+		check(got, "`claude --version` failed: exited with status 4; stderr: "+strings.Repeat("0", 300)+"...")
+	case "auth-exit":
+		check(authDetail(pfaScript(t, "exit 2")), "`claude auth status --json` failed (exited with status 2); "+login)
+	case "auth-signal":
+		check(authDetail(pfaScript(t, "kill -15 $$")), "`claude auth status --json` failed (was ended by signal 15 (terminated)); "+login)
+	case "auth-start-error":
+		missing := filepath.Join(t.TempDir(), "missing")
+		check(authDetail(missing), "`claude auth status --json` failed (could not start: fork/exec "+missing+": no such file or directory); "+login)
+	case "auth-stderr-hidden":
+		got := authDetail(pfaScript(t, "echo LEAKME >&2; exit 2"))
+		check(got, "`claude auth status --json` failed (exited with status 2); "+login)
+	case "auth-unreadable":
+		_, err := a.authStatus(context.Background(), pfaScript(t, "echo notjson"), a.childEnv("", ""))
+		got := wantError(t, err, "executor/unavailable").Detail
+		if !strings.Contains(got, "gave an unreadable answer") || strings.Contains(got, "exited with status") {
+			t.Fatalf("detail %q", got)
+		}
+	default:
+		t.Fatalf("unknown scenario %q", scenario)
+	}
+	fmt.Println("PFA_OK " + scenario)
+}

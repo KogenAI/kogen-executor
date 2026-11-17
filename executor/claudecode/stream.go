@@ -628,8 +628,13 @@ func (t target) unchanged() bool {
 
 // processEnd words how the process ended: by a signal, or with an exit status.
 func (r *roundRun) processEnd(exit int) string {
-	if r.endSignal != 0 {
-		return "was ended by signal " + strconv.Itoa(int(r.endSignal)) + " (" + r.endSignal.String() + ")"
+	return processEnd(r.endSignal, exit)
+}
+
+// processEnd words how a process ended: by sig when it is not 0, otherwise with the exit status.
+func processEnd(sig syscall.Signal, exit int) string {
+	if sig != 0 {
+		return "was ended by signal " + strconv.Itoa(int(sig)) + " (" + sig.String() + ")"
 	}
 	return "exited with status " + strconv.Itoa(exit)
 }

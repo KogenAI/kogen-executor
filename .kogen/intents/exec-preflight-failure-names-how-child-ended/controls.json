@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation splits run into a lower-level child runner and routes authStatus through it; it was verified in a scratch copy (all ten driver scenarios pass, six wrong variants are rejected) but the whole-file patches are too large to carry here faithfully, so the Build writes the implementation."}
