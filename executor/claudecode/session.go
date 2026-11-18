@@ -333,8 +333,14 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 		<-writerDone
 	}()
 	pgid := cmd.Process.Pid
+	desc := &descendants{}
+	desc.begin(pgid)
+	endTracking := desc.track()
 	defer func() {
+		desc.refresh()
 		syscall.Kill(-pgid, syscall.SIGKILL)
+		desc.stop()
+		endTracking()
 		retire()
 	}()
 	s.live.Store(int64(pgid))
@@ -378,7 +384,7 @@ func (s *session) runRound(ctx context.Context, n int, prompt string, rr *roundR
 	killed := false // the adapter ended the process
 	fail := func(err error) (executor.RoundResult, error) {
 		killed = true
-		killGroup(pgid, exited)
+		killGroup(pgid, exited, desc)
 		return executor.RoundResult{}, err
 	}
 
@@ -392,7 +398,7 @@ loop:
 		case <-stderrFailed:
 			return fail(errArtifactWrite)
 		case <-ctx.Done():
-			terminateGroup(pgid, exited, s.a.killGrace)
+			terminateGroup(pgid, exited, s.a.killGrace, desc)
 			return executor.RoundResult{}, rr.classifyContext(ctx)
 		case err := <-werrCh:
 			werrCh = nil
@@ -435,7 +441,7 @@ loop:
 			// Claude Code is gone: stop what it left in its group (which may hold the
 			// pipe open), then drain what was written.
 			exitedCh = nil
-			terminateGroup(pgid, exited, s.a.killGrace)
+			terminateGroup(pgid, exited, s.a.killGrace, desc)
 			drain = time.After(groupDrain)
 		case <-drain:
 			lingering = exitedCh != nil
@@ -446,19 +452,19 @@ loop:
 	// All output read. Claude Code may linger after its result (background work): bound it.
 	if lingering {
 		killed = true
-		terminateGroup(pgid, exited, s.a.killGrace)
+		terminateGroup(pgid, exited, s.a.killGrace, desc)
 	}
 	select {
 	case <-exited:
 	case <-ctx.Done():
-		terminateGroup(pgid, exited, s.a.killGrace)
+		terminateGroup(pgid, exited, s.a.killGrace, desc)
 		return executor.RoundResult{}, rr.classifyContext(ctx)
 	case <-time.After(s.a.killGrace):
 		killed = true
-		terminateGroup(pgid, exited, s.a.killGrace)
+		terminateGroup(pgid, exited, s.a.killGrace, desc)
 	}
 	if groupAlive(pgid) {
-		terminateGroup(pgid, exited, s.a.killGrace)
+		terminateGroup(pgid, exited, s.a.killGrace, desc)
 	}
 	select {
 	case <-exited:
@@ -513,8 +519,11 @@ func waitGone(pgid int, exited <-chan struct{}, timeout time.Duration) bool {
 }
 
 // terminateGroup is the cancellation ladder: SIGTERM to the whole group, KillGrace, SIGKILL to
-// the whole group, and a wait until nothing is left. Nothing is signalled if the group is gone.
-func terminateGroup(pgid int, exited <-chan struct{}, grace time.Duration) {
+// the whole group, and a wait until nothing is left. Nothing is signalled to the group if it is
+// gone; the recorded descendants outside it are stopped in every case.
+func terminateGroup(pgid int, exited <-chan struct{}, grace time.Duration, desc *descendants) {
+	desc.refresh()
+	defer desc.stop()
 	if !groupAlive(pgid) {
 		select {
 		case <-exited:
@@ -526,13 +535,16 @@ func terminateGroup(pgid int, exited <-chan struct{}, grace time.Duration) {
 	if waitGone(pgid, exited, grace) {
 		return
 	}
-	killGroup(pgid, exited)
+	killGroup(pgid, exited, desc)
 }
 
-// killGroup is SIGKILL to the whole group and a bounded wait for it to disappear.
-func killGroup(pgid int, exited <-chan struct{}) {
+// killGroup is SIGKILL to the whole group and a bounded wait for it to disappear, then SIGKILL
+// to the descendants recorded below the leader (which may have left the group).
+func killGroup(pgid int, exited <-chan struct{}, desc *descendants) {
+	desc.refresh()
 	syscall.Kill(-pgid, syscall.SIGKILL)
 	waitGone(pgid, exited, 10*time.Second)
+	desc.stop()
 }
 
 // readLine reads one line (without the newline), failing when it exceeds max bytes.

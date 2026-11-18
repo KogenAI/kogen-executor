@@ -252,13 +252,23 @@ func (a *adapter) runChild(ctx context.Context, bin string, env []string, token 
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	desc := &descendants{}
+	cmd.Cancel = func() error {
+		desc.refresh()
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	cmd.Env = env
 	var buf, errBuf limitedBuffer
 	cmd.Stdout, cmd.Stderr = &buf, &errBuf
 	cmd.WaitDelay = 2 * time.Second
 	end := ""
 	err := startWithToken(cmd, token, cmd.Start)
+	endTracking := func() {}
+	if err == nil {
+		desc.begin(cmd.Process.Pid)
+		endTracking = desc.track()
+	}
+	defer func() { endTracking() }()
 	if err != nil {
 		end = "could not start: " + err.Error()
 	} else if err = cmd.Wait(); err != nil {
@@ -278,7 +288,7 @@ func (a *adapter) runChild(ctx context.Context, bin string, env []string, token 
 		// on a successful preflight or a child holding an output pipe open.
 		exited := make(chan struct{})
 		close(exited)
-		killGroup(cmd.Process.Pid, exited)
+		killGroup(cmd.Process.Pid, exited, desc)
 	}
 	if err != nil {
 		if ctx.Err() != nil {

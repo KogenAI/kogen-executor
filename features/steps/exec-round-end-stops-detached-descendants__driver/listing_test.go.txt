@@ -1,0 +1,48 @@
+package claudecode
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-executor/executor/conformance"
+)
+
+// The acceptance driver of the listing case of exec-round-end-stops-detached-descendants.
+func TestDDAAcceptance(t *testing.T) {
+	scenario := os.Getenv("DDA_SCENARIO")
+	if scenario != "listing" {
+		t.Fatalf("unknown scenario %q", scenario)
+	}
+	prev := processTable
+	processTable = func() (string, error) { return "", errors.New("ps unavailable") }
+	defer func() { processTable = prev }()
+
+	h := newHarness(t, fakeConfig{Script: oneRound(finishRound)})
+	s := h.startOK()
+	res, err := s.Round(context.Background(), executor.Input{})
+	if err != nil {
+		t.Fatalf("a round that ends normally failed because the listing failed: %v", err)
+	}
+	if res.Claim != "done" {
+		t.Fatalf("claim %q, want %q", res.Claim, "done")
+	}
+
+	h2 := newHarness(t, fakeConfig{Script: oneRound(conformance.RoundScript{End: "finish", Claim: "done", Actions: []conformance.Action{{SleepSeconds: 30}}})})
+	s2 := h2.startOK()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err = s2.Round(ctx, executor.Input{})
+	if err == nil {
+		t.Fatal("the cancelled round returned no error")
+	}
+	if took := time.Since(start); took > 12*time.Second {
+		t.Fatalf("the cancelled round took %v with the listing unavailable; the group kill must end it within its bound", took)
+	}
+	fmt.Println("DDA_OK " + scenario)
+}

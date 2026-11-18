@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation spans process-table parsing and three kill sites in claudecode.go and session.go plus a fake change in fake_test.go; the Build writes it and the acceptance drivers observe it through real processes."}

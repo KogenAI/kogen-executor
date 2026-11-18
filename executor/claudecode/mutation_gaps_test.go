@@ -78,7 +78,7 @@ func TestTerminateGroupSendsSIGTERMFirst(t *testing.T) {
 	if l, _ := bufio.NewReader(out).ReadString('\n'); l != "ready\n" {
 		t.Fatalf("child said %q", l)
 	}
-	terminateGroup(pgid, exited, 3*time.Second)
+	terminateGroup(pgid, exited, 3*time.Second, nil)
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("the child was not asked to stop with SIGTERM before SIGKILL: %v", err)
 	}

@@ -89,6 +89,10 @@ type fakeConfig struct {
 	StderrToken bool `json:"stderr_token"`
 	// AuthStderrToken does the same in `auth status`.
 	AuthStderrToken bool `json:"auth_stderr_token"`
+	// DetachedChild starts `sleep 300` in its own session after the init event, records its pid in
+	// .detached-child.pid in the working directory and waits 1.5 s so the executor can see it as a
+	// live descendant before the script continues.
+	DetachedChild bool `json:"detached_child"`
 }
 
 // readFD3Token reads the stored token from fd 3, as Claude Code does with
@@ -214,6 +218,14 @@ func fakeClaude(cfgPath string, args []string) int {
 		for _, event := range cfg.RoundEvents[n-1] {
 			out(event)
 		}
+	}
+	if cfg.DetachedChild {
+		dc := exec.Command("sleep", "300")
+		dc.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := dc.Start(); err == nil {
+			os.WriteFile(filepath.Join(cwd, ".detached-child.pid"), []byte(strconv.Itoa(dc.Process.Pid)), 0o644)
+		}
+		time.Sleep(1500 * time.Millisecond)
 	}
 	if rs.APIKeyAuth {
 		time.Sleep(time.Second) // the adapter must have killed us before we act
