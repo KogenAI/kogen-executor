@@ -83,3 +83,64 @@ func TestInspectStringElixirParity(t *testing.T) {
 		}
 	}
 }
+
+func TestDiagnosticText(t *testing.T) {
+	text := func(s string) any { return map[string]any{"type": "text", "text": s} }
+	msg := func(content any) any { return map[string]any{"content": content} }
+	cases := []struct {
+		name string
+		item any
+		want string
+	}{
+		{"string content is returned unchanged", msg("  a\nb  "), "  a\nb  "},
+		{"empty string content", msg(""), ""},
+		{"string content is not read as blocks", msg("text"), "text"},
+		{"one text block", msg([]any{text("a")}), "a"},
+		{"text blocks are joined by one newline", msg([]any{text("a"), text("b"), text("c")}), "a\nb\nc"},
+		{"empty list", msg([]any{}), ""},
+		{"non-map block contributes no text", msg([]any{"x"}), ""},
+		{"non-map blocks between text blocks leave the valid text", msg([]any{text("a"), "x", 3, nil, []any{"y"}, text("b")}), "a\nb"},
+		{"map without text contributes no text", msg([]any{map[string]any{"type": "image"}}), ""},
+		{"map without text between text blocks leaves the valid text", msg([]any{text("a"), map[string]any{"type": "image"}, text("b")}), "a\nb"},
+		{"map with non-string text between text blocks leaves the valid text", msg([]any{text("a"), map[string]any{"text": 5}, map[string]any{"text": nil}, text("b")}), "a\nb"},
+		{"number content", msg(3), ""},
+		{"map content", msg(map[string]any{"text": "a"}), ""},
+		{"list that is not []any", msg([]string{"a", "b"}), ""},
+		{"list of maps that is not []any", msg([]map[string]any{{"text": "a"}}), ""},
+		{"nil content", msg(nil), ""},
+		{"missing content", map[string]any{"text": "a"}, ""},
+		{"non-map item", "text", ""},
+		{"nil item", nil, ""},
+		{"list item", []any{text("a")}, ""},
+	}
+	for _, tc := range cases {
+		if got := DiagnosticText(tc.item); got != tc.want {
+			t.Errorf("%s: DiagnosticText(%v) = %q, want %q", tc.name, tc.item, got, tc.want)
+		}
+	}
+}
+
+func TestMaterialText(t *testing.T) {
+	cases := []struct {
+		name   string
+		block  any
+		want   string
+		wantOK bool
+	}{
+		{"map with string text", map[string]any{"type": "text", "text": "a"}, "a", true},
+		{"map with empty string text", map[string]any{"text": ""}, "", true},
+		{"map without text", map[string]any{"type": "image"}, "", false},
+		{"map with non-string text", map[string]any{"text": 5}, "", false},
+		{"map with nil text", map[string]any{"text": nil}, "", false},
+		{"string is not a block", "a", "", false},
+		{"nil", nil, "", false},
+		{"list", []any{"a"}, "", false},
+		{"map of another type", map[string]string{"text": "a"}, "", false},
+	}
+	for _, tc := range cases {
+		got, ok := MaterialText(tc.block)
+		if got != tc.want || ok != tc.wantOK {
+			t.Errorf("%s: MaterialText(%v) = (%q, %v), want (%q, %v)", tc.name, tc.block, got, ok, tc.want, tc.wantOK)
+		}
+	}
+}
