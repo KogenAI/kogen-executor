@@ -2,7 +2,10 @@ package core
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
+
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 func TestDisplayFloatInterpolation(t *testing.T) {
@@ -142,5 +145,47 @@ func TestMaterialText(t *testing.T) {
 		if got != tc.want || ok != tc.wantOK {
 			t.Errorf("%s: MaterialText(%v) = (%q, %v), want (%q, %v)", tc.name, tc.block, got, ok, tc.want, tc.wantOK)
 		}
+	}
+}
+
+func sharedDefinition(t *testing.T, name string) map[string]any {
+	t.Helper()
+	def, ok := tools.Definition(name)
+	if !ok {
+		t.Fatalf("no shared definition for %q", name)
+	}
+	return def
+}
+
+func TestShellDefinitionsUsesSuppliedShell(t *testing.T) {
+	supplied := &tools.Tools{}
+	names := []string{"read_file", "write_file", "shell", "list_files", "search_text"}
+	suppliedShell, ok := supplied.Definition("shell")
+	if !ok {
+		t.Fatal("the supplied tools have no shell definition")
+	}
+	var want []any
+	for _, name := range names {
+		if name == "shell" {
+			want = append(want, suppliedShell)
+		} else {
+			want = append(want, sharedDefinition(t, name))
+		}
+	}
+	got := ShellDefinitions(supplied, names)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ShellDefinitions(%v) = %v, want %v", names, got, want)
+	}
+}
+
+func TestShellDefinitionsWithoutShellIgnoresSuppliedTools(t *testing.T) {
+	names := []string{"read_file", "write_file", "list_files", "search_text"}
+	var want []any
+	for _, name := range names {
+		want = append(want, sharedDefinition(t, name))
+	}
+	got := ShellDefinitions(nil, names)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ShellDefinitions(nil, %v) = %v, want %v", names, got, want)
 	}
 }
