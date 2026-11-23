@@ -189,3 +189,20 @@ func TestShellDefinitionsWithoutShellIgnoresSuppliedTools(t *testing.T) {
 		t.Errorf("ShellDefinitions(nil, %v) = %v, want %v", names, got, want)
 	}
 }
+
+func TestEncodeJSONKeepsHTMLCharactersAndOmitsFinalNewline(t *testing.T) {
+	got, err := EncodeJSON(map[string]string{"html": "<b>Tom & Jerry</b>"})
+	if err != nil {
+		t.Fatalf("EncodeJSON returned an error: %v", err)
+	}
+	want := `{"html":"<b>Tom & Jerry</b>"}`
+	if string(got) != want {
+		t.Fatalf("EncodeJSON = %q, want %q", got, want)
+	}
+}
+
+func TestEncodeJSONReturnsErrorForUnrepresentableValue(t *testing.T) {
+	if got, err := EncodeJSON(make(chan int)); err == nil {
+		t.Fatalf("EncodeJSON of a channel returned no error, output %q", got)
+	}
+}
