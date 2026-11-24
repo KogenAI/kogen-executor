@@ -214,3 +214,21 @@ func TestEncodeJSONReturnsErrorForUnrepresentableValue(t *testing.T) {
 		t.Fatalf("EncodeJSON of a channel returned no error, output %q", got)
 	}
 }
+
+func TestHashHexKnownVectors(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []byte
+		want  string
+	}{
+		{"non-empty", []byte("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+		{"empty", []byte{}, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HashHex(tc.input); got != tc.want {
+				t.Errorf("HashHex(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
