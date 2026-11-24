@@ -232,3 +232,22 @@ func TestHashHexKnownVectors(t *testing.T) {
 		})
 	}
 }
+
+func TestNonNilNilSlice(t *testing.T) {
+	var input []int
+	got := NonNil(input)
+	if got == nil {
+		t.Error("NonNil(nil) returned a nil slice")
+	}
+	if len(got) != 0 {
+		t.Errorf("NonNil(nil) = %v, want zero length", got)
+	}
+}
+
+func TestNonNilPopulatedSlice(t *testing.T) {
+	input := []int{3, 1, 2}
+	want := []int{3, 1, 2}
+	if got := NonNil(input); !reflect.DeepEqual(got, want) {
+		t.Errorf("NonNil populated slice = %v, want %v", got, want)
+	}
+}

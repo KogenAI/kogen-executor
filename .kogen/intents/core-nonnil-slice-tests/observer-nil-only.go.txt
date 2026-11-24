@@ -1,0 +1,11 @@
+package core
+
+import "testing"
+
+func TestNonNil(t *testing.T) {
+	var input []int
+	got := NonNil(input)
+	if got == nil || len(got) != 0 {
+		t.Fatalf("NonNil(nil) = %#v, want non-nil empty slice", got)
+	}
+}

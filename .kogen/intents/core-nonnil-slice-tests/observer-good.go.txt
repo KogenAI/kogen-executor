@@ -1,0 +1,18 @@
+package core
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestNonNil(t *testing.T) {
+	var input []int
+	got := NonNil(input)
+	if got == nil || len(got) != 0 {
+		t.Fatalf("NonNil(nil) = %#v, want non-nil empty slice", got)
+	}
+	populated := []int{3, 1, 2}
+	if got := NonNil(populated); !reflect.DeepEqual(got, populated) {
+		t.Fatalf("NonNil(%v) = %v", populated, got)
+	}
+}
