@@ -1,0 +1,51 @@
+{
+  "correct": {
+    "files": {
+      "core/util_test.go": {
+        "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -191,7 +191,8 @@\n }\n \n func TestEncodeJSONKeepsHTMLCharactersAndOmitsFinalNewline(t *testing.T) {\n-\tgot, err := EncodeJSON(map[string]string{\"html\": \"<b>Tom & Jerry</b>\"})\n+\tinput := map[string]string{\"html\": \"<b>Tom & Jerry</b>\"}\n+\tgot, err := EncodeJSON(input)\n \tif err != nil {\n \t\tt.Fatalf(\"EncodeJSON returned an error: %v\", err)\n \t}\n@@ -199,6 +200,13 @@\n \tif string(got) != want {\n \t\tt.Fatalf(\"EncodeJSON = %q, want %q\", got, want)\n \t}\n+\tvar decoded map[string]string\n+\tif err := json.Unmarshal(got, &decoded); err != nil {\n+\t\tt.Fatalf(\"EncodeJSON output is not valid JSON: %v\", err)\n+\t}\n+\tif !reflect.DeepEqual(decoded, input) {\n+\t\tt.Fatalf(\"decoded EncodeJSON = %#v, want %#v\", decoded, input)\n+\t}\n }\n \n func TestEncodeJSONReturnsErrorForUnrepresentableValue(t *testing.T) {\n"
+      }
+    }
+  },
+  "wrong": [
+    {
+      "name": "no decoding regression check",
+      "scenario": "Successful output is decoded in a direct regression test",
+      "step": "Then core-encode-json-contract-tests: a direct test decodes the successful result",
+      "files": {
+        "core/util_test.go": {
+          "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -200,13 +200,6 @@\n \tif string(got) != want {\n \t\tt.Fatalf(\"EncodeJSON = %q, want %q\", got, want)\n \t}\n-\tvar decoded map[string]string\n-\tif err := json.Unmarshal(got, &decoded); err != nil {\n-\t\tt.Fatalf(\"EncodeJSON output is not valid JSON: %v\", err)\n-\t}\n-\tif !reflect.DeepEqual(decoded, input) {\n-\t\tt.Fatalf(\"decoded EncodeJSON = %#v, want %#v\", decoded, input)\n-\t}\n }\n \n func TestEncodeJSONReturnsErrorForUnrepresentableValue(t *testing.T) {\n"
+        }
+      }
+    },
+    {
+      "name": "allows default HTML escaping",
+      "scenario": "HTML-sensitive characters are literal",
+      "step": "Then core-encode-json-contract-tests: the direct tests reject the \"html\" regression",
+      "files": {
+        "core/util_test.go": {
+          "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -197,7 +197,7 @@\n \t\tt.Fatalf(\"EncodeJSON returned an error: %v\", err)\n \t}\n \twant := `{\"html\":\"<b>Tom & Jerry</b>\"}`\n-\tif string(got) != want {\n+\tif string(got) != want && string(got) != `{\"html\":\"\\u003cb\\u003eTom \\u0026 Jerry\\u003c/b\\u003e\"}` {\n \t\tt.Fatalf(\"EncodeJSON = %q, want %q\", got, want)\n \t}\n \tvar decoded map[string]string\n"
+        }
+      }
+    },
+    {
+      "name": "allows final newline",
+      "scenario": "Successful output has no final newline",
+      "step": "Then core-encode-json-contract-tests: the direct tests reject the \"newline\" regression",
+      "files": {
+        "core/util_test.go": {
+          "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -197,7 +197,7 @@\n \t\tt.Fatalf(\"EncodeJSON returned an error: %v\", err)\n \t}\n \twant := `{\"html\":\"<b>Tom & Jerry</b>\"}`\n-\tif string(got) != want {\n+\tif string(got) != want && string(got) != want+\"\\n\" {\n \t\tt.Fatalf(\"EncodeJSON = %q, want %q\", got, want)\n \t}\n \tvar decoded map[string]string\n"
+        }
+      }
+    },
+    {
+      "name": "does not assert encoder error",
+      "scenario": "Unsupported values return an error",
+      "step": "Then core-encode-json-contract-tests: the direct tests reject the \"error\" regression",
+      "files": {
+        "core/util_test.go": {
+          "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -210,7 +210,7 @@\n }\n \n func TestEncodeJSONReturnsErrorForUnrepresentableValue(t *testing.T) {\n-\tif got, err := EncodeJSON(make(chan int)); err == nil {\n+\tif got, err := EncodeJSON(make(chan int)); false && err == nil {\n \t\tt.Fatalf(\"EncodeJSON of a channel returned no error, output %q\", got)\n \t}\n }\n"
+        }
+      }
+    }
+  ]
+}

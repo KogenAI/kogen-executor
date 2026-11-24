@@ -191,13 +191,21 @@ func TestShellDefinitionsWithoutShellIgnoresSuppliedTools(t *testing.T) {
 }
 
 func TestEncodeJSONKeepsHTMLCharactersAndOmitsFinalNewline(t *testing.T) {
-	got, err := EncodeJSON(map[string]string{"html": "<b>Tom & Jerry</b>"})
+	input := map[string]string{"html": "<b>Tom & Jerry</b>"}
+	got, err := EncodeJSON(input)
 	if err != nil {
 		t.Fatalf("EncodeJSON returned an error: %v", err)
 	}
 	want := `{"html":"<b>Tom & Jerry</b>"}`
 	if string(got) != want {
 		t.Fatalf("EncodeJSON = %q, want %q", got, want)
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal(got, &decoded); err != nil {
+		t.Fatalf("decoding EncodeJSON output: %v", err)
+	}
+	if !reflect.DeepEqual(decoded, input) {
+		t.Errorf("decoded EncodeJSON output = %v, want %v", decoded, input)
 	}
 }
 
