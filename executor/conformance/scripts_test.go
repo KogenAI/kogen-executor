@@ -20,6 +20,35 @@ func TestScriptsParse(t *testing.T) {
 	}
 }
 
+func TestParseScriptTrailingContent(t *testing.T) {
+	const filename = "finish_after_write.json"
+	for _, tt := range []struct {
+		name    string
+		tail    string
+		wantErr bool
+	}{
+		{name: "whitespace", tail: " \t\r\n"},
+		{name: "second JSON value", tail: ` {"name":"another"}`, wantErr: true},
+		{name: "garbage", tail: " garbage", wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := parseScript(filename, []byte(`{"name":"finish_after_write"}`+tt.tail))
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), filename) {
+					t.Fatalf("error = %v, want error naming %s", err, filename)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.Name != "finish_after_write" {
+				t.Fatalf("script name = %q, want finish_after_write", s.Name)
+			}
+		})
+	}
+}
+
 // TestClaudeLineupRoleScripts: the role scripts every Claude Code driver performs name their
 // role, are limited to the executor that implements them, and each structured role either ends
 // with the exact submission it expects or stops with executor/protocol and no round.

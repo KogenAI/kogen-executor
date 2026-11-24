@@ -11,6 +11,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,19 +166,34 @@ func Scripts() ([]Script, error) {
 		if err != nil {
 			return nil, err
 		}
-		dec := json.NewDecoder(strings.NewReader(string(b)))
-		dec.DisallowUnknownFields()
-		var s Script
-		if err := dec.Decode(&s); err != nil {
-			return nil, errors.New(e.Name() + ": " + err.Error())
-		}
-		if s.Name+".json" != e.Name() {
-			return nil, errors.New(e.Name() + ": name does not match the file")
+		s, err := parseScript(e.Name(), b)
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, s)
 	}
 	slices.SortFunc(out, func(a, b Script) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
+}
+
+func parseScript(filename string, data []byte) (Script, error) {
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec.DisallowUnknownFields()
+	var s Script
+	if err := dec.Decode(&s); err != nil {
+		return Script{}, errors.New(filename + ": " + err.Error())
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return Script{}, errors.New(filename + ": unexpected second JSON value")
+		}
+		return Script{}, errors.New(filename + ": " + err.Error())
+	}
+	if s.Name+".json" != filename {
+		return Script{}, errors.New(filename + ": name does not match the file")
+	}
+	return s, nil
 }
 
 // Feedback is the feedback text Run sends before round n (n >= 2).
