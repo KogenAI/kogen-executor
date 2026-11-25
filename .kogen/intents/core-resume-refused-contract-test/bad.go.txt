@@ -1,0 +1,12 @@
+package core
+
+import "testing"
+
+func TestResumeRefusalError(t *testing.T) {
+	for _, detail := range []string{"saved candidate differs", ""} {
+		got := ResumeRefused(detail)
+		if got == nil || got.Reason != "resume_refused" {
+			t.Fatalf("ResumeRefused(%q) = %#v, want reason resume_refused", detail, got)
+		}
+	}
+}

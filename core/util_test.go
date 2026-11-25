@@ -251,3 +251,32 @@ func TestNonNilPopulatedSlice(t *testing.T) {
 		t.Errorf("NonNil populated slice = %v, want %v", got, want)
 	}
 }
+
+func TestResumeRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		detail string
+	}{
+		{"supplied", "cannot resume this session"},
+		{"empty", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ResumeRefused(tc.detail)
+			if got == nil {
+				t.Fatal("ResumeRefused returned nil")
+			}
+			if got.Class != "candidate" {
+				t.Errorf("Class = %q, want candidate", got.Class)
+			}
+			if got.Reason != "resume_refused" {
+				t.Errorf("Reason = %q, want resume_refused", got.Reason)
+			}
+			if got.Detail != tc.detail {
+				t.Errorf("Detail = %q, want %q", got.Detail, tc.detail)
+			}
+			if got.Exit != 1 {
+				t.Errorf("Exit = %d, want 1", got.Exit)
+			}
+		})
+	}
+}

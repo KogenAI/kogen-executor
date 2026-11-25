@@ -1,0 +1,16 @@
+package core
+
+import "testing"
+
+func TestResumeRefusalError(t *testing.T) {
+	for _, detail := range []string{"saved candidate differs", ""} {
+		got := ResumeRefused(detail)
+		if got == nil {
+			t.Fatalf("ResumeRefused(%q) returned nil", detail)
+		}
+		if got.Class != "candidate" || got.Reason != "resume_refused" || got.Detail != detail || got.Exit != 1 {
+			t.Errorf("ResumeRefused(%q) = (%q, %q, %q, %d), want (%q, %q, %q, %d)", detail,
+				got.Class, got.Reason, got.Detail, got.Exit, "candidate", "resume_refused", detail, 1)
+		}
+	}
+}

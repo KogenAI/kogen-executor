@@ -1,0 +1,81 @@
+{
+  "correct": {
+    "files": {
+      "core/util_test.go": {
+        "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -251,3 +251,16 @@\n \t\tt.Errorf(\"NonNil populated slice = %v, want %v\", got, want)\n \t}\n }\n+\n+func TestResumeRefusalError(t *testing.T) {\n+\tfor _, detail := range []string{\"saved candidate differs\", \"\"} {\n+\t\tgot := ResumeRefused(detail)\n+\t\tif got == nil {\n+\t\t\tt.Fatalf(\"ResumeRefused(%q) returned nil\", detail)\n+\t\t}\n+\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || got.Detail != detail || got.Exit != 1 {\n+\t\t\tt.Errorf(\"ResumeRefused(%q) = (%q, %q, %q, %d), want (%q, %q, %q, %d)\", detail,\n+\t\t\t\tgot.Class, got.Reason, got.Detail, got.Exit, \"candidate\", \"resume_refused\", detail, 1)\n+\t\t}\n+\t}\n+}\n"
+      }
+    }
+  },
+  "wrong": [
+    {
+      "name": "omit class assertion for supplied detail",
+      "scenario": "Supplied detail is preserved with the refusal classification",
+      "step": "Then core-resume-refused-contract-test: the direct tests require class \"candidate\", reason \"resume_refused\", unchanged supplied detail and exit code 1",
+      "files": {
+        "core/util_test.go": {
+          "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -258,7 +258,7 @@\n \t\tif got == nil {\n \t\t\tt.Fatalf(\"ResumeRefused(%q) returned nil\", detail)\n \t\t}\n-\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || got.Detail != detail || got.Exit != 1 {\n+\t\tif (detail == \"\" && got.Class != \"candidate\") || got.Reason != \"resume_refused\" || got.Detail != detail || got.Exit != 1 {\n \t\t\tt.Errorf(\"ResumeRefused(%q) = (%q, %q, %q, %d), want (%q, %q, %q, %d)\", detail,\n \t\t\t\tgot.Class, got.Reason, got.Detail, got.Exit, \"candidate\", \"resume_refused\", detail, 1)\n \t\t}\n"
+        }
+      }
+    },
+    {
+      "name": "omit reason assertion for supplied detail",
+      "scenario": "Supplied detail is preserved with the refusal classification",
+      "step": "Then core-resume-refused-contract-test: the direct tests require class \"candidate\", reason \"resume_refused\", unchanged supplied detail and exit code 1",
+      "files": {
+        "core/util_test.go": {
+          "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -258,7 +258,7 @@\n \t\tif got == nil {\n \t\t\tt.Fatalf(\"ResumeRefused(%q) returned nil\", detail)\n \t\t}\n-\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || got.Detail != detail || got.Exit != 1 {\n+\t\tif got.Class != \"candidate\" || (detail == \"\" && got.Reason != \"resume_refused\") || got.Detail != detail || got.Exit != 1 {\n \t\t\tt.Errorf(\"ResumeRefused(%q) = (%q, %q, %q, %d), want (%q, %q, %q, %d)\", detail,\n \t\t\t\tgot.Class, got.Reason, got.Detail, got.Exit, \"candidate\", \"resume_refused\", detail, 1)\n \t\t}\n"
+        }
+      }
+    },
+    {
+      "name": "omit detail assertion for supplied detail",
+      "scenario": "Supplied detail is preserved with the refusal classification",
+      "step": "Then core-resume-refused-contract-test: the direct tests require class \"candidate\", reason \"resume_refused\", unchanged supplied detail and exit code 1",
+      "files": {
+        "core/util_test.go": {
+          "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -258,7 +258,7 @@\n \t\tif got == nil {\n \t\t\tt.Fatalf(\"ResumeRefused(%q) returned nil\", detail)\n \t\t}\n-\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || got.Detail != detail || got.Exit != 1 {\n+\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || (detail == \"\" && got.Detail != detail) || got.Exit != 1 {\n \t\t\tt.Errorf(\"ResumeRefused(%q) = (%q, %q, %q, %d), want (%q, %q, %q, %d)\", detail,\n \t\t\t\tgot.Class, got.Reason, got.Detail, got.Exit, \"candidate\", \"resume_refused\", detail, 1)\n \t\t}\n"
+        }
+      }
+    },
+    {
+      "name": "omit exit code assertion for supplied detail",
+      "scenario": "Supplied detail is preserved with the refusal classification",
+      "step": "Then core-resume-refused-contract-test: the direct tests require class \"candidate\", reason \"resume_refused\", unchanged supplied detail and exit code 1",
+      "files": {
+        "core/util_test.go": {
+          "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -258,7 +258,7 @@\n \t\tif got == nil {\n \t\t\tt.Fatalf(\"ResumeRefused(%q) returned nil\", detail)\n \t\t}\n-\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || got.Detail != detail || got.Exit != 1 {\n+\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || got.Detail != detail || (detail == \"\" && got.Exit != 1) {\n \t\t\tt.Errorf(\"ResumeRefused(%q) = (%q, %q, %q, %d), want (%q, %q, %q, %d)\", detail,\n \t\t\t\tgot.Class, got.Reason, got.Detail, got.Exit, \"candidate\", \"resume_refused\", detail, 1)\n \t\t}\n"
+        }
+      }
+    },
+    {
+      "name": "omit detail assertion for empty detail",
+      "scenario": "Empty detail remains empty with the same refusal classification",
+      "step": "Then core-resume-refused-contract-test: the direct tests require class \"candidate\", reason \"resume_refused\", empty detail and exit code 1 when detail is empty",
+      "files": {
+        "core/util_test.go": {
+          "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -258,7 +258,7 @@\n \t\tif got == nil {\n \t\t\tt.Fatalf(\"ResumeRefused(%q) returned nil\", detail)\n \t\t}\n-\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || got.Detail != detail || got.Exit != 1 {\n+\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || (detail != \"\" && got.Detail != detail) || got.Exit != 1 {\n \t\t\tt.Errorf(\"ResumeRefused(%q) = (%q, %q, %q, %d), want (%q, %q, %q, %d)\", detail,\n \t\t\t\tgot.Class, got.Reason, got.Detail, got.Exit, \"candidate\", \"resume_refused\", detail, 1)\n \t\t}\n"
+        }
+      }
+    },
+    {
+      "name": "omit class assertion for empty detail",
+      "scenario": "Empty detail remains empty with the same refusal classification",
+      "step": "Then core-resume-refused-contract-test: the direct tests require class \"candidate\", reason \"resume_refused\", empty detail and exit code 1 when detail is empty",
+      "files": {
+        "core/util_test.go": {
+          "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -258,7 +258,7 @@\n \t\tif got == nil {\n \t\t\tt.Fatalf(\"ResumeRefused(%q) returned nil\", detail)\n \t\t}\n-\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || got.Detail != detail || got.Exit != 1 {\n+\t\tif (detail != \"\" && got.Class != \"candidate\") || got.Reason != \"resume_refused\" || got.Detail != detail || got.Exit != 1 {\n \t\t\tt.Errorf(\"ResumeRefused(%q) = (%q, %q, %q, %d), want (%q, %q, %q, %d)\", detail,\n \t\t\t\tgot.Class, got.Reason, got.Detail, got.Exit, \"candidate\", \"resume_refused\", detail, 1)\n \t\t}\n"
+        }
+      }
+    },
+    {
+      "name": "omit exit code assertion for empty detail",
+      "scenario": "Empty detail remains empty with the same refusal classification",
+      "step": "Then core-resume-refused-contract-test: the direct tests require class \"candidate\", reason \"resume_refused\", empty detail and exit code 1 when detail is empty",
+      "files": {
+        "core/util_test.go": {
+          "patch": "--- a/core/util_test.go\n+++ b/core/util_test.go\n@@ -258,7 +258,7 @@\n \t\tif got == nil {\n \t\t\tt.Fatalf(\"ResumeRefused(%q) returned nil\", detail)\n \t\t}\n-\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || got.Detail != detail || got.Exit != 1 {\n+\t\tif got.Class != \"candidate\" || got.Reason != \"resume_refused\" || got.Detail != detail || (detail != \"\" && got.Exit != 1) {\n \t\t\tt.Errorf(\"ResumeRefused(%q) = (%q, %q, %q, %d), want (%q, %q, %q, %d)\", detail,\n \t\t\t\tgot.Class, got.Reason, got.Detail, got.Exit, \"candidate\", \"resume_refused\", detail, 1)\n \t\t}\n"
+        }
+      }
+    }
+  ]
+}
